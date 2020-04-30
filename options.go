@@ -1,6 +1,9 @@
 package wirenet
 
-import "time"
+import (
+	"io"
+	"time"
+)
 
 const (
 	DefaultKeepAliveInterval = 30 * time.Second
@@ -10,23 +13,29 @@ const (
 	DefaultAcceptBacklog     = 256
 )
 
-type Option func(*Wire)
+type Option func(*wire)
+
+func WithLogWriter(w io.Writer) Option {
+	return func(wire *wire) {
+		wire.transportConf.LogOutput = w
+	}
+}
 
 func WithKeepAliveInterval(interval time.Duration) Option {
-	return func(wire *Wire) {
+	return func(wire *wire) {
 		wire.transportConf.KeepAliveInterval = interval
 		wire.transportConf.EnableKeepAlive = true
 	}
 }
 
 func WithKeepAlive(flag bool) Option {
-	return func(wire *Wire) {
+	return func(wire *wire) {
 		wire.transportConf.EnableKeepAlive = flag
 	}
 }
 
 func WithReadWriteTimeouts(read, write time.Duration) Option {
-	return func(wire *Wire) {
+	return func(wire *wire) {
 		wire.readTimeout = read
 		wire.writeTimeout = write
 		wire.transportConf.ConnectionWriteTimeout = write
