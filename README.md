@@ -12,16 +12,15 @@ Simple bidirectional client &lt;-> server
 
 #### Some design...
 ```go
-addr := "0.0.0.0:5678"
-sessHub := somehub.New() 
+addr := "0:5678"
 
 // server side
 wire := wirenet.New(addr, wirenet.ServerSide, 
    wirenet.WithOpenSession(func(sess wirenet.Session) error {
-        return sessHub.register(sess)
+        sessRegisterCh <- sess	
    }),
    wirenet.WithCloseSession(func(sess wirenet.Session) error {
-        return sessHub.unregister(sess)
+        sessUnregisterCh <- sess
    }),
 )
 wire.Mount("balance:read", func(cmd wirenet.Cmd) error {
@@ -41,29 +40,17 @@ wire.Mount("balance:write", func(cmd wirenet.Cmd) error {
 if err := wire.Listen(); err != nil {
     panic(err)
 }
-
-...
-
-sess := sessHub.Find("123")
-cmd := sess.Command("balance:geo:it:read")
-cmd.ReadFrom(someReader)
-
-...
-
-cmd = sess.Command("history:add")
-json.NewEncoder(cmd).Encode(SomeRequest{
-    ID: 1,
-    Method: "Pay",
-})
-json.NewDecoder(cmd).Decode(&SomeResponse{})
-
 defer wire.Close()
 
 // client side 1
-wire := wirenet.New(addr, wirenet.ClientSide)
-wire.Mount("history:add", func(cmd wirenet.Cmd) {
-    
-})
+wire := wirenet.New(addr, wirenet.ClientSide, 
+     wirenet.WithOpenSession(func(sess wirenet.Session) error {
+         sessRegisterCh <- sess	
+     }),
+     wirenet.WithCloseSession(func(sess wirenet.Session) error {
+         sessUnregisterCh <- sess	
+     }),                                          
+)
 wire.Mount("balance:geo:it:read", func(cmd wirenet.Cmd) error {
      file, err := os.Open("/path/to/balance.mxn")
      if err != nil {
@@ -84,7 +71,14 @@ if err := wire.Listen(); err != nil {
 defer wire.Close()
 
 // client side 2
-wire := wirenet.New(addr, wirenet.ClientSide)
+wire := wirenet.New(addr, wirenet.ClientSide, 
+     wirenet.WithOpenSession(func(sess wirenet.Session) error {
+         sessRegisterCh <- sess	
+     }),
+     wirenet.WithCloseSession(func(sess wirenet.Session) error {
+         sessUnregisterCh <- sess	
+     }),                                          
+)
 wire.Mount("balance:geo:usa:read", func(cmd wirenet.Cmd) error {
      file, err := os.Open("/path/to/balance.mxn")
      if err != nil {
