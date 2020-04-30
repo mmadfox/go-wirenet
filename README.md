@@ -10,7 +10,7 @@ Simple bidirectional client &lt;-> server
 6. Graceful shutdown
 
 
-#### Design:
+#### Some design...
 ```go
 addr := "0.0.0.0:5678"
 sessHub := somehub.New() 
@@ -42,15 +42,28 @@ if err := wire.Listen(); err != nil {
     panic(err)
 }
 
+...
+
 sess := sessHub.Find("123")
 cmd := sess.Command("balance:geo:it:read")
 cmd.ReadFrom(someReader)
+
 ...
+
+cmd = sess.Command("history:add")
+json.NewEncoder(cmd).Encode(SomeRequest{
+    ID: 1,
+    Method: "Pay",
+})
+json.NewDecoder(cmd).Decode(&SomeResponse{})
 
 defer wire.Close()
 
 // client side 1
-wire := wirenet.New(addr, wirenet.ServerSide)
+wire := wirenet.New(addr, wirenet.ClientSide)
+wire.Mount("history:add", func(cmd wirenet.Cmd) {
+    
+})
 wire.Mount("balance:geo:it:read", func(cmd wirenet.Cmd) error {
      file, err := os.Open("/path/to/balance.mxn")
      if err != nil {
@@ -71,7 +84,7 @@ if err := wire.Listen(); err != nil {
 defer wire.Close()
 
 // client side 2
-wire := wirenet.New(addr, wirenet.ServerSide)
+wire := wirenet.New(addr, wirenet.ClientSide)
 wire.Mount("balance:geo:usa:read", func(cmd wirenet.Cmd) error {
      file, err := os.Open("/path/to/balance.mxn")
      if err != nil {
