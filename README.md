@@ -8,6 +8,7 @@ Simple bidirectional client &lt;-> server
 4. Remote call
 5. Middleware
 6. Graceful shutdown
+7. Error handler
 
 
 #### Some design...
@@ -15,14 +16,15 @@ Simple bidirectional client &lt;-> server
 addr := "0:5678"
 
 // server side
-wire := wirenet.New(addr, wirenet.ServerSide, 
-   wirenet.WithOpenSession(func(sess wirenet.Session) error {
-        sessRegisterCh <- sess	
-   }),
-   wirenet.WithCloseSession(func(sess wirenet.Session) error {
-        sessUnregisterCh <- sess
-   }),
-)
+wire := wirenet.New(addr, wirenet.ServerSide)
+wire.OpenSession(func(sess wirenet.Session) error {
+     sessRegisterCh <- sess
+     return nil
+})
+wire.CloseSession(func(sess wirenet.Session) error {
+     sessUnregisterCh <- sess
+     return nil
+})
 wire.Mount("balance:read", func(cmd wirenet.Cmd) error {
      file, err := os.Open("/path/to/balance.mxn")
      if err != nil {
@@ -43,14 +45,15 @@ if err := wire.Listen(); err != nil {
 defer wire.Close()
 
 // client side 1
-wire := wirenet.New(addr, wirenet.ClientSide, 
-     wirenet.WithOpenSession(func(sess wirenet.Session) error {
-         sessRegisterCh <- sess	
-     }),
-     wirenet.WithCloseSession(func(sess wirenet.Session) error {
-         sessUnregisterCh <- sess	
-     }),                                          
-)
+wire := wirenet.New(addr, wirenet.ClientSide)
+wire.OpenSession(func(sess wirenet.Session) error {
+     sessRegisterCh <- sess
+     return nil
+})
+wire.CloseSession(func(sess wirenet.Session) error {
+     sessUnregisterCh <- sess
+     return nil
+})
 wire.Mount("balance:geo:it:read", func(cmd wirenet.Cmd) error {
      file, err := os.Open("/path/to/balance.mxn")
      if err != nil {
@@ -71,14 +74,15 @@ if err := wire.Listen(); err != nil {
 defer wire.Close()
 
 // client side 2
-wire := wirenet.New(addr, wirenet.ClientSide, 
-     wirenet.WithOpenSession(func(sess wirenet.Session) error {
-         sessRegisterCh <- sess	
-     }),
-     wirenet.WithCloseSession(func(sess wirenet.Session) error {
-         sessUnregisterCh <- sess	
-     }),                                          
-)
+wire := wirenet.New(addr, wirenet.ClientSide)
+wire.OpenSession(func(sess wirenet.Session) error {
+     sessRegisterCh <- sess
+     return nil
+})
+wire.CloseSession(func(sess wirenet.Session) error {
+     sessUnregisterCh <- sess
+     return nil
+})
 wire.Mount("balance:geo:usa:read", func(cmd wirenet.Cmd) error {
      file, err := os.Open("/path/to/balance.mxn")
      if err != nil {
