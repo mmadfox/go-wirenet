@@ -19,6 +19,7 @@ const (
 var (
 	ErrListenerAddrEmpty   = errors.New("wirenet: listener address is empty")
 	ErrUnknownListenerSide = errors.New("wirenet: unknown role listener")
+	ErrSessionClosed       = errors.New("wirenet: session closed")
 )
 
 type Role int
@@ -48,9 +49,11 @@ type Wire interface {
 var defaultSessionHook = func(s Session) error { return nil }
 
 type wire struct {
-	addr         string
-	readTimeout  time.Duration
-	writeTimeout time.Duration
+	addr string
+
+	readTimeout      time.Duration
+	writeTimeout     time.Duration
+	sessCloseTimeout time.Duration
 
 	role          Role
 	openSessHook  SessionHook
@@ -72,9 +75,12 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		return nil, ErrListenerAddrEmpty
 	}
 	wire := &wire{
-		addr:          addr,
-		readTimeout:   DefaultReadTimeout,
-		writeTimeout:  DefaultWriteTimeout,
+		addr: addr,
+
+		readTimeout:      DefaultReadTimeout,
+		writeTimeout:     DefaultWriteTimeout,
+		sessCloseTimeout: DefaultSessionCloseTimeout,
+
 		role:          role,
 		regSessCh:     make(chan *session, 1),
 		unRegSessCh:   make(chan *session, 1),

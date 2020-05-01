@@ -6,11 +6,12 @@ import (
 )
 
 const (
-	DefaultKeepAliveInterval = 30 * time.Second
-	DefaultEnableKeepAlive   = true
-	DefaultReadTimeout       = 30 * time.Second
-	DefaultWriteTimeout      = 30 * time.Second
-	DefaultAcceptBacklog     = 256
+	DefaultKeepAliveInterval   = 30 * time.Second
+	DefaultEnableKeepAlive     = true
+	DefaultReadTimeout         = 30 * time.Second
+	DefaultWriteTimeout        = 30 * time.Second
+	DefaultAcceptBacklog       = 256
+	DefaultSessionCloseTimeout = 120 * time.Second
 )
 
 type Option func(*wire)
@@ -39,5 +40,11 @@ func WithReadWriteTimeouts(read, write time.Duration) Option {
 		wire.readTimeout = read
 		wire.writeTimeout = write
 		wire.transportConf.ConnectionWriteTimeout = write
+	}
+}
+
+func WithCloseSessionTimeout(dur time.Duration) Option {
+	return func(w *wire) {
+		w.sessCloseTimeout = dur
 	}
 }
