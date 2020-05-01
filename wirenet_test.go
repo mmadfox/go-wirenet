@@ -2,7 +2,6 @@ package wirenet
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"testing"
 	"time"
@@ -67,7 +66,6 @@ func TestWire_Close(t *testing.T) {
 	time.Sleep(time.Second)
 	for sn := 0; sn < 10; sn++ {
 		go func(id int) {
-			// t.Logf("open session id %d", id)
 			sess := makeConn(t, addr)
 			for x := 0; x < 10; x++ {
 				conn, err := sess.OpenStream()
@@ -76,7 +74,6 @@ func TestWire_Close(t *testing.T) {
 				}
 				func(stream *yamux.Stream, sid int) {
 					defer stream.Close()
-					// t.Logf("open stream session id %d", sid)
 					time.Sleep(15 * time.Second)
 				}(conn, id)
 			}
@@ -85,7 +82,6 @@ func TestWire_Close(t *testing.T) {
 	errCh := make(chan error)
 	go func() {
 		time.Sleep(5 * time.Second)
-		log.Println("send close wire")
 		errCh <- wire.Close()
 		return
 	}()

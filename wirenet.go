@@ -3,7 +3,6 @@ package wirenet
 import (
 	"errors"
 	"io"
-	"log"
 	"net"
 	"os"
 	"sync"
@@ -159,11 +158,12 @@ func (w *wire) acceptServer() (err error) {
 	for {
 		conn, acceptErr := listener.Accept()
 		if acceptErr != nil {
-			err = acceptErr
+			if !w.isClosed {
+				err = acceptErr
+			}
 			break
 		}
 		if w.isClosed {
-			log.Println("reject CONN")
 			_ = conn.Close()
 			continue
 		}
@@ -186,49 +186,54 @@ func (w *wire) shutdown(conn io.Closer) {
 	}
 
 	var (
-		workerNum = 8
+		workerNum = w.hub.len() / 2
 		sessLen   = w.hub.len()
 		queueCh   = make(chan *session, workerNum)
 		doneCh    = make(chan error, sessLen)
 		closeCh   = make(chan interface{})
 	)
-	for w := 0; w < workerNum; w++ {
-		go func(q chan *session, d chan error, wid int) {
-			for {
-				select {
-				case sess, ok := <-queueCh:
-					if !ok {
-						return
-					}
-					err := sess.Close()
-					if errors.Is(err, ErrSessionClosed) {
-						err = nil
-					}
-					doneCh <- err
-				case <-closeCh:
-					return
-				}
-			}
-		}(queueCh, doneCh, w)
+	for i := 0; i < workerNum; i++ {
+		go w.shutdownSession(queueCh, doneCh, closeCh)
 	}
 	for _, sess := range w.hub.store {
 		queueCh <- sess
 	}
 
-	shutdownErr := &ShutdownError{
-		Errors: make([]error, 0, 8),
-	}
+	shutdownErr := NewShutdownError()
 	for ei := 0; ei < sessLen; ei++ {
 		err := <-doneCh
 		if err != nil {
 			shutdownErr.Errors = append(shutdownErr.Errors, err)
 		}
 	}
+
 	close(closeCh)
-	if len(shutdownErr.Errors) == 0 {
+
+	if err := conn.Close(); err != nil {
+		shutdownErr.Errors = append(shutdownErr.Errors, err)
+	}
+	if !shutdownErr.HasErrors() {
 		shutdownErr = nil
 	}
 	errCh <- shutdownErr
+}
+
+func (w *wire) shutdownSession(q chan *session, e chan error, c chan interface{}) {
+	for {
+		select {
+		case sess, ok := <-q:
+			if !ok {
+				return
+			}
+			err := sess.Close()
+			if errors.Is(err, ErrSessionClosed) {
+				err = nil
+			}
+			e <- err
+		case <-c:
+			return
+		}
+	}
 }
 
 func (w *wire) acceptClient() error {
@@ -280,6 +285,16 @@ func (s *sessions) unregister(sess *session) {
 
 type ShutdownError struct {
 	Errors []error
+}
+
+func NewShutdownError() *ShutdownError {
+	return &ShutdownError{
+		Errors: make([]error, 0, 8),
+	}
+}
+
+func (e *ShutdownError) HasErrors() bool {
+	return len(e.Errors) > 0
 }
 
 func (e *ShutdownError) Error() string {
