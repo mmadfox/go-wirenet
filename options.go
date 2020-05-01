@@ -11,7 +11,7 @@ const (
 	DefaultReadTimeout         = 30 * time.Second
 	DefaultWriteTimeout        = 30 * time.Second
 	DefaultAcceptBacklog       = 256
-	DefaultSessionCloseTimeout = 120 * time.Second
+	DefaultSessionCloseTimeout = 60 * time.Second
 )
 
 type Option func(*wire)

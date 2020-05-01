@@ -15,8 +15,7 @@ func TestSession_Close(t *testing.T) {
 	t.Skip()
 
 	w := &wire{
-		regSessCh:   make(chan *session),
-		unRegSessCh: make(chan *session),
+		sessCloseTimeout: 5 * time.Second,
 	}
 
 	addr := ":4545"
@@ -35,11 +34,15 @@ func TestSession_Close(t *testing.T) {
 			sess := newSession(w, conn, srv)
 			assert.Nil(t, err)
 			go sess.handle()
-			time.Sleep(1 * time.Second)
-			err = sess.Close()
-			assert.Nil(t, err)
-			log.Println("close session err", err)
-			return
+
+			go func() {
+				time.Sleep(10 * time.Second)
+				log.Println("exec close")
+				err = sess.Close()
+				assert.Nil(t, err)
+				log.Println("after close", err)
+				return
+			}()
 		}
 	}()
 
@@ -51,8 +54,8 @@ func TestSession_Close(t *testing.T) {
 	assert.Nil(t, err)
 	for i := 0; i < 5; i++ {
 		sess.OpenStream()
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(1 * time.Second)
 	}
 
-	time.Sleep(3 * time.Second)
+	time.Sleep(60 * time.Second)
 }

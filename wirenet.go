@@ -2,8 +2,11 @@ package wirenet
 
 import (
 	"errors"
+	"io"
+	"log"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +20,7 @@ const (
 )
 
 var (
+	ErrWireClosed          = errors.New("wirenet closed")
 	ErrListenerAddrEmpty   = errors.New("wirenet: listener address is empty")
 	ErrUnknownListenerSide = errors.New("wirenet: unknown role listener")
 	ErrSessionClosed       = errors.New("wirenet: session closed")
@@ -63,8 +67,9 @@ type wire struct {
 	regSessCh   chan *session
 	unRegSessCh chan *session
 
-	sessions map[uuid.UUID]*session
+	hub      *sessions
 	isClosed bool
+	closeCh  chan chan error
 }
 
 func New(addr string, role Role, opts ...Option) (Wire, error) {
@@ -86,7 +91,9 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		unRegSessCh:   make(chan *session, 1),
 		openSessHook:  defaultSessionHook,
 		closeSessHook: defaultSessionHook,
-		sessions:      make(map[uuid.UUID]*session),
+		hub:           newSessions(),
+		closeCh:       make(chan chan error),
+
 		transportConf: &yamux.Config{
 			AcceptBacklog:          DefaultAcceptBacklog,
 			EnableKeepAlive:        DefaultEnableKeepAlive,
@@ -100,7 +107,7 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		opt(wire)
 	}
 
-	go wire.sessionsManage()
+	// go wire.sessionsManage()
 
 	return wire, nil
 }
@@ -129,28 +136,15 @@ func (w *wire) Mount(name string, handler func(Cmd)) error {
 	return nil
 }
 
-// 1. Если сервер сторона, то запретить подключение
-// 2. Закрыть все сессии и дождаться выполнение всех команд(стримов)
-// 3. Закрыть слушателя и выйты
-
 func (w *wire) Close() (err error) {
+	if w.isClosed {
+		return ErrWireClosed
+	}
 	w.isClosed = true
 
-	switch w.role {
-	case ClientSide:
-		err = w.closeClientSide()
-	case ServerSide:
-		err = w.closeServerSide()
-	}
-	return err
-}
-
-func (w *wire) closeClientSide() error {
-	return nil
-}
-
-func (w *wire) closeServerSide() error {
-	return nil
+	errCh := make(chan error)
+	w.closeCh <- errCh
+	return <-errCh
 }
 
 func (w *wire) acceptServer() (err error) {
@@ -160,6 +154,8 @@ func (w *wire) acceptServer() (err error) {
 	}
 	defer listener.Close()
 
+	go w.shutdown(listener)
+
 	for {
 		conn, acceptErr := listener.Accept()
 		if acceptErr != nil {
@@ -167,6 +163,7 @@ func (w *wire) acceptServer() (err error) {
 			break
 		}
 		if w.isClosed {
+			log.Println("reject CONN")
 			_ = conn.Close()
 			continue
 		}
@@ -182,38 +179,56 @@ func (w *wire) acceptServer() (err error) {
 	return err
 }
 
-//func (w *wire) openSession(conn net.Conn, transportSess *yamux.Session) {
-//	log.Println("session G")
-//	session := newSession(
-//		conn,
-//		transportSess,
-//	)
-//	defer func() {
-//		w.unRegSessCh <- session
-//		_ = transportSess.Close()
-//		_ = conn.Close()
-//		_ = w.closeSessHook(session)
-//	}()
-//	if err := w.openSessHook(session); err != nil {
-//		return
-//	}
-//	w.regSessCh <- session
-//}
+func (w *wire) shutdown(conn io.Closer) {
+	errCh, ok := <-w.closeCh
+	if !ok {
+		return
+	}
 
-func (w *wire) sessionsManage() {
-	for {
-		select {
-		case sess := <-w.regSessCh:
-			if err := w.openSessHook(sess); err != nil {
-				_ = sess.Close()
-				continue
+	var (
+		workerNum = 8
+		sessLen   = w.hub.len()
+		queueCh   = make(chan *session, workerNum)
+		doneCh    = make(chan error, sessLen)
+		closeCh   = make(chan interface{})
+	)
+	for w := 0; w < workerNum; w++ {
+		go func(q chan *session, d chan error, wid int) {
+			for {
+				select {
+				case sess, ok := <-queueCh:
+					if !ok {
+						return
+					}
+					err := sess.Close()
+					if errors.Is(err, ErrSessionClosed) {
+						err = nil
+					}
+					doneCh <- err
+				case <-closeCh:
+					return
+				}
 			}
-			w.sessions[sess.id] = sess
-		case sess := <-w.unRegSessCh:
-			_ = w.closeSessHook(sess)
-			delete(w.sessions, sess.id)
+		}(queueCh, doneCh, w)
+	}
+	for _, sess := range w.hub.store {
+		queueCh <- sess
+	}
+
+	shutdownErr := &ShutdownError{
+		Errors: make([]error, 0, 8),
+	}
+	for ei := 0; ei < sessLen; ei++ {
+		err := <-doneCh
+		if err != nil {
+			shutdownErr.Errors = append(shutdownErr.Errors, err)
 		}
 	}
+	close(closeCh)
+	if len(shutdownErr.Errors) == 0 {
+		shutdownErr = nil
+	}
+	errCh <- shutdownErr
 }
 
 func (w *wire) acceptClient() error {
@@ -227,4 +242,46 @@ func validateRole(r Role) error {
 	default:
 		return ErrUnknownListenerSide
 	}
+}
+
+type sessions struct {
+	store map[uuid.UUID]*session
+	sync.RWMutex
+	counter int
+}
+
+func newSessions() *sessions {
+	return &sessions{
+		store: make(map[uuid.UUID]*session),
+	}
+}
+
+func (s *sessions) len() int {
+	s.RLock()
+	defer s.RUnlock()
+	return s.counter
+}
+
+func (s *sessions) register(sess *session) {
+	s.Lock()
+	defer s.Unlock()
+	s.store[sess.id] = sess
+	s.counter++
+}
+
+func (s *sessions) unregister(sess *session) {
+	s.Lock()
+	defer s.Unlock()
+	delete(s.store, sess.id)
+	if s.counter > 0 {
+		s.counter--
+	}
+}
+
+type ShutdownError struct {
+	Errors []error
+}
+
+func (e *ShutdownError) Error() string {
+	return "shutdown error"
 }

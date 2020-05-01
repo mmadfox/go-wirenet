@@ -16,6 +16,10 @@ type Session interface {
 	Command(string) Cmd
 }
 
+const (
+	waitShutdownInterval = 500 * time.Millisecond
+)
+
 type session struct {
 	id           uuid.UUID
 	conn         net.Conn
@@ -29,7 +33,7 @@ type session struct {
 }
 
 func newSession(w *wire, conn net.Conn, sess *yamux.Session) *session {
-	return &session{
+	s := &session{
 		wire:         w,
 		conn:         conn,
 		ts:           sess,
@@ -38,6 +42,8 @@ func newSession(w *wire, conn net.Conn, sess *yamux.Session) *session {
 		hub:          newCommands(),
 		closeTimeout: w.sessCloseTimeout,
 	}
+	w.hub.register(s)
+	return s
 }
 
 func (s *session) ID() uuid.UUID {
@@ -45,7 +51,7 @@ func (s *session) ID() uuid.UUID {
 }
 
 func (s *session) IsClosed() bool {
-	return false
+	return s.isClosed
 }
 
 func (s *session) Close() error {
@@ -57,6 +63,8 @@ func (s *session) Close() error {
 	errCh := make(chan error)
 	s.closeCh <- errCh
 
+	s.wire.hub.unregister(s)
+
 	return <-errCh
 }
 
@@ -65,19 +73,29 @@ func (s *session) Command(name string) Cmd {
 }
 
 func (s *session) runCommand(ctx context.Context, conn *yamux.Stream) {
+	cmd := newCommand("test", s)
+	defer func() {
+		if err := recover(); err != nil {
+			// TODO: send to error handler
+		}
+		_ = cmd.Close()
+	}()
 
+	// log.Println("startRunCommand", conn.StreamID())
+	time.Sleep(1 * time.Second)
+	//log.Println("stopRunCommand", conn.StreamID())
+	cmd.Close()
 }
 
 func (s *session) handle() {
 	ctx := s.shutdown()
-
 	for {
 		conn, err := s.ts.AcceptStream()
 		if err != nil {
 			_ = s.Close()
 			return
 		}
-		if s.isClosed {
+		if s.isClosed || s.wire.isClosed {
 			_ = conn.Close()
 			continue
 		}
@@ -91,21 +109,20 @@ func (s *session) shutdown() context.Context {
 	go func() {
 		for {
 			select {
-			case <-ctx.Done():
-				return
 			case errCh, ok := <-s.closeCh:
 				if !ok {
 					return
 				}
-				now := time.Now()
+				timeout := time.Now().Add(s.closeTimeout)
 				for {
 					if s.hub.total() <= 0 {
 						break
 					}
-					if time.Since(now).Seconds() > s.closeTimeout.Seconds() {
+					if timeout.Unix() <= time.Now().Unix() {
+						s.forceCloseCommands()
 						break
 					}
-					time.Sleep(time.Second)
+					time.Sleep(waitShutdownInterval)
 				}
 				cancel()
 				errCh <- s.ts.Close()
@@ -115,4 +132,23 @@ func (s *session) shutdown() context.Context {
 		}
 	}()
 	return ctx
+}
+
+func (s *session) forceCloseCommands() {
+	for _, cmd := range s.hub.store {
+		_ = cmd.Close()
+	}
+}
+
+func RandomPort() (int, error) {
+	addr, err := net.ResolveTCPAddr("tcp", "0.0.0.0:0")
+	if err != nil {
+		return 0, err
+	}
+	listener, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port, nil
 }
