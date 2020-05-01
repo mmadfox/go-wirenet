@@ -106,8 +106,6 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		opt(wire)
 	}
 
-	// go wire.sessionsManage()
-
 	return wire, nil
 }
 
@@ -186,8 +184,8 @@ func (w *wire) shutdown(conn io.Closer) {
 	}
 
 	var (
-		workerNum = w.hub.len() / 2
 		sessLen   = w.hub.len()
+		workerNum = sessLen / 2
 		queueCh   = make(chan *session, workerNum)
 		doneCh    = make(chan error, sessLen)
 		closeCh   = make(chan interface{})

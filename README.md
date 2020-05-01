@@ -7,7 +7,7 @@ Simple bidirectional client &lt;-> server
 3. Reconnect
 4. Remote call
 5. Middleware
-6. Graceful shutdown
+6. Graceful shutdown - DONE
 7. Error handler
 
 
