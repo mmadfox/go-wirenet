@@ -4,11 +4,13 @@ Simple bidirectional client &lt;-> server
 #### TODO: 
 1. TLS/SSL
 2. JWT Auth
-3. Reconnect
+3. Reconnect - DONE
 4. Remote call
 5. Middleware
 6. Graceful shutdown - DONE
 7. Error handler
+8. Options
+9. Logger interface
 
 
 #### Some design...

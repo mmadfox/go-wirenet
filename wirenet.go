@@ -40,6 +40,7 @@ func (s Role) String() (side string) {
 }
 
 type SessionHook func(Session) error
+type RetryPolicy func(min, max time.Duration, attemptNum int) time.Duration
 
 type Wire interface {
 	OpenSession(SessionHook)
@@ -63,12 +64,14 @@ type wire struct {
 	closeSessHook SessionHook
 	transportConf *yamux.Config
 
-	regSessCh   chan *session
-	unRegSessCh chan *session
-
 	hub      *sessions
 	isClosed bool
 	closeCh  chan chan error
+
+	retryWaitMin time.Duration
+	retryWaitMax time.Duration
+	retryMax     int
+	retryPolicy  RetryPolicy
 }
 
 func New(addr string, role Role, opts ...Option) (Wire, error) {
@@ -86,12 +89,15 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		sessCloseTimeout: DefaultSessionCloseTimeout,
 
 		role:          role,
-		regSessCh:     make(chan *session, 1),
-		unRegSessCh:   make(chan *session, 1),
 		openSessHook:  defaultSessionHook,
 		closeSessHook: defaultSessionHook,
 		hub:           newSessions(),
 		closeCh:       make(chan chan error),
+
+		retryMax:     DefaultRetryMax,
+		retryWaitMin: DefaultRetryWaitMin,
+		retryWaitMax: DefaultRetryWaitMax,
+		retryPolicy:  DefaultRetryPolicy,
 
 		transportConf: &yamux.Config{
 			AcceptBacklog:          DefaultAcceptBacklog,
@@ -144,6 +150,39 @@ func (w *wire) Close() (err error) {
 	return <-errCh
 }
 
+func (w *wire) acceptClient() (err error) {
+	for i := 0; ; i++ {
+		attemptNum := i
+		if attemptNum > w.retryMax {
+			break
+		}
+
+		conn, er := net.Dial("tcp", w.addr)
+		if er != nil {
+			er = err
+			retryWait := w.retryPolicy(
+				w.retryWaitMin,
+				w.retryWaitMax,
+				attemptNum)
+			time.Sleep(retryWait)
+			continue
+		}
+
+		wrapConn, serveErr := yamux.Client(conn, w.transportConf)
+		if serveErr != nil {
+			err = serveErr
+			break
+		}
+
+		session := newSession(w, conn, wrapConn)
+		go session.handle()
+		go w.shutdown(wrapConn)
+
+		<-session.waitCh
+	}
+	return err
+}
+
 func (w *wire) acceptServer() (err error) {
 	listener, err := net.Listen("tcp", w.addr)
 	if err != nil {
@@ -172,7 +211,8 @@ func (w *wire) acceptServer() (err error) {
 			break
 		}
 
-		go newSession(w, conn, wrapConn).handle()
+		session := newSession(w, conn, wrapConn)
+		go session.handle()
 	}
 	return err
 }
@@ -183,13 +223,18 @@ func (w *wire) shutdown(conn io.Closer) {
 		return
 	}
 
+	sessLen := w.hub.len()
+	workerNum := sessLen
+	if sessLen > 1 {
+		workerNum /= 2
+	}
+
 	var (
-		sessLen   = w.hub.len()
-		workerNum = sessLen / 2
-		queueCh   = make(chan *session, workerNum)
-		doneCh    = make(chan error, sessLen)
-		closeCh   = make(chan interface{})
+		queueCh = make(chan *session, workerNum)
+		doneCh  = make(chan error, sessLen)
+		closeCh = make(chan interface{})
 	)
+
 	for i := 0; i < workerNum; i++ {
 		go w.shutdownSession(queueCh, doneCh, closeCh)
 	}
@@ -232,10 +277,6 @@ func (w *wire) shutdownSession(q chan *session, e chan error, c chan interface{}
 			return
 		}
 	}
-}
-
-func (w *wire) acceptClient() error {
-	return nil
 }
 
 func validateRole(r Role) error {

@@ -27,6 +27,7 @@ type session struct {
 	wire         *wire
 	cmdCounter   int32
 	closeCh      chan chan error
+	waitCh       chan interface{}
 	isClosed     bool
 	hub          *commands
 	closeTimeout time.Duration
@@ -39,6 +40,7 @@ func newSession(w *wire, conn net.Conn, sess *yamux.Session) *session {
 		ts:           sess,
 		id:           uuid.New(),
 		closeCh:      make(chan chan error),
+		waitCh:       make(chan interface{}),
 		hub:          newCommands(),
 		closeTimeout: w.sessCloseTimeout,
 	}
@@ -82,13 +84,18 @@ func (s *session) runCommand(ctx context.Context, conn *yamux.Stream) {
 	}()
 
 	// log.Println("startRunCommand", conn.StreamID())
-	time.Sleep(1 * time.Second)
+	time.Sleep(10 * time.Second)
 	//log.Println("stopRunCommand", conn.StreamID())
 	cmd.Close()
 }
 
 func (s *session) handle() {
 	ctx := s.shutdown()
+
+	defer func() {
+		close(s.waitCh)
+	}()
+
 	for {
 		conn, err := s.ts.AcceptStream()
 		if err != nil {

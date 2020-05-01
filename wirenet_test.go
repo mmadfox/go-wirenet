@@ -29,6 +29,32 @@ func TestNew(t *testing.T) {
 	assert.NotNil(t, wire)
 }
 
+func TestWire_ListenClientSide(t *testing.T) {
+	t.Skip()
+	addr := ":9090"
+	go func() {
+		wireSrv, err := New(addr, ServerSide)
+		assert.Nil(t, err)
+		go func() {
+			time.Sleep(5 * time.Second)
+			assert.Nil(t, wireSrv.Close())
+		}()
+		assert.Nil(t, wireSrv.Listen())
+
+	}()
+	time.Sleep(time.Second)
+	wire, err := New(addr, ClientSide)
+	assert.Nil(t, err)
+	//go func() {
+	//	time.Sleep(5 * time.Second)
+	//	log.Println("close client side")
+	//	wire.Close()
+	//	log.Println("done client side")
+	//}()
+	assert.Nil(t, wire.Listen())
+	time.Sleep(time.Hour)
+}
+
 func TestWire_OpenSession(t *testing.T) {
 	t.Skip()
 	//addr := ":9087"
@@ -81,7 +107,7 @@ func TestWire_Close(t *testing.T) {
 	}
 	errCh := make(chan error)
 	go func() {
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 		errCh <- wire.Close()
 		return
 	}()

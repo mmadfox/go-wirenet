@@ -2,6 +2,7 @@ package wirenet
 
 import (
 	"io"
+	"math"
 	"time"
 )
 
@@ -11,10 +12,29 @@ const (
 	DefaultReadTimeout         = 30 * time.Second
 	DefaultWriteTimeout        = 30 * time.Second
 	DefaultAcceptBacklog       = 256
-	DefaultSessionCloseTimeout = 60 * time.Second
+	DefaultSessionCloseTimeout = 10 * time.Second
+	DefaultRetryMax            = 100
+	DefaultRetryWaitMax        = 60 * time.Second
+	DefaultRetryWaitMin        = 1 * time.Second
 )
 
 type Option func(*wire)
+
+func WithRetryWait(min, max time.Duration) Option {
+	return func(w *wire) {
+		w.retryWaitMax = max
+		w.retryWaitMin = min
+	}
+}
+
+func WithRetryMax(n int) Option {
+	return func(w *wire) {
+		if n <= 0 {
+			n = 1
+		}
+		w.retryMax = n
+	}
+}
 
 func WithLogWriter(w io.Writer) Option {
 	return func(wire *wire) {
@@ -47,4 +67,13 @@ func WithCloseSessionTimeout(dur time.Duration) Option {
 	return func(w *wire) {
 		w.sessCloseTimeout = dur
 	}
+}
+
+func DefaultRetryPolicy(min, max time.Duration, attemptNum int) time.Duration {
+	m := math.Pow(2, float64(attemptNum)) * float64(min)
+	wait := time.Duration(m)
+	if float64(wait) != m || wait > max {
+		wait = max
+	}
+	return wait
 }
