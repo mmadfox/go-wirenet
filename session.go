@@ -77,7 +77,7 @@ func (s *session) Command(name string) (Cmd, error) {
 		return nil, err
 	}
 
-	_, err = sendInitFrame(name, []byte("JWT"), stream)
+	_, err = sendFrame(name, initFrameTyp, s.wire.token, stream)
 	if err != nil {
 		return nil, err
 	}
@@ -86,40 +86,90 @@ func (s *session) Command(name string) (Cmd, error) {
 }
 
 func (s *session) runCommand(ctx context.Context, stream *yamux.Stream) {
-	frm, err := recvInitFrame(stream, func(f frame) error {
-		// JWT verify
-		return nil
-	})
-	if err != nil {
-		_ = stream.Close()
-		return
-	}
-
-	log.Println("runCommand", frm.Command(), string(frm.Payload()))
-
-	cmd := newCommand("", s)
 	defer func() {
 		if err := recover(); err != nil {
-			// TODO: send to error handler
 		}
-		_ = cmd.Close()
-		stream.Close()
-		log.Println("CLOSE")
+		_ = stream.Close()
 	}()
 
-	log.Println("startRunCommand", stream.StreamID())
-	time.Sleep(10 * time.Second)
-	log.Println("stopRunCommand", stream.StreamID())
-	cmd.Close()
+	frm, err := recvFrame(stream, func(f frame) error {
+		if s.wire.verifyToken == nil {
+			return nil
+		}
+		return s.wire.verifyToken(f.Command(), f.Payload())
+	})
+	if err != nil {
+		return
+	}
+	// TODO:
+	log.Println("Run command", frm.Command())
+	time.Sleep(time.Second)
+	frm = frm
+}
+
+func (s *session) tokenVerification() (err error) {
+	switch s.wire.role {
+	case ClientSide:
+		err = s.tokenVerificationClientSide()
+		if err != nil {
+			s.wire.retryMax = -1
+		}
+	case ServerSide:
+		err = s.tokenVerificationServerSide()
+	}
+	return err
+}
+
+func (s *session) tokenVerificationClientSide() error {
+	if s.wire.token == nil {
+		return nil
+	}
+	stream, err := s.ts.OpenStream()
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	_, sendErr := sendFrame(
+		tokenVerification,
+		permFrameTyp,
+		s.wire.token,
+		stream)
+	if sendErr != nil {
+		err = sendErr
+	}
+	return err
+}
+
+func (s *session) tokenVerificationServerSide() error {
+	if s.wire.verifyToken == nil {
+		return nil
+	}
+
+	conn, err := s.ts.AcceptStream()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	_, err = recvFrame(conn, func(f frame) error {
+		return s.wire.verifyToken(f.Command(), f.Payload())
+	})
+	return err
 }
 
 func (s *session) handle() {
-	ctx := s.shutdown()
-
 	defer func() {
 		close(s.waitCh)
 		_ = s.wire.closeSessHook(s)
 	}()
+
+	ctx := s.shutdown()
+
+	if err := s.tokenVerification(); err != nil {
+		_ = s.Close()
+		return
+	}
 
 	if err := s.wire.openSessHook(s); err != nil {
 		return
@@ -145,6 +195,8 @@ func (s *session) shutdown() context.Context {
 	go func() {
 		for {
 			select {
+			case <-s.waitCh:
+				return
 			case errCh, ok := <-s.closeCh:
 				if !ok {
 					return

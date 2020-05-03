@@ -8,15 +8,34 @@ import (
 )
 
 const (
-	initFrame uint32 = 0x2
-	errFrame  uint32 = 0x4
-	recvFrame uint32 = 0x6
+	initFrameTyp uint32 = 0x2
+	errFrameTyp  uint32 = 0x4
+	recvFrameTyp uint32 = 0x6
+	permFrameTyp uint32 = 0x8
 
 	hdrLen       = 4
 	headerLength = hdrLen * 3
+
+	tokenVerification = "tokenVerification"
 )
 
 type frame []byte
+
+func (f frame) IsInitFrame() bool {
+	return f.Type() == initFrameTyp
+}
+
+func (f frame) IsErrFrame() bool {
+	return f.Type() == errFrameTyp
+}
+
+func (f frame) IsRecvFrame() bool {
+	return f.Type() == recvFrameTyp
+}
+
+func (f frame) IsPermFrame() bool {
+	return f.Type() == permFrameTyp
+}
 
 func (f frame) Type() uint32 {
 	return binary.LittleEndian.Uint32(f[0:4])
@@ -137,33 +156,37 @@ func (c *frameEncoder) Encode(typ uint32, cmd string, payload []byte) error {
 	return nil
 }
 
-func sendInitFrame(name string, data []byte, rw io.ReadWriter) (frame, error) {
-	if err := newEncoder(rw).Encode(initFrame, name, data); err != nil {
+func sendFrame(name string, typ uint32, data []byte, rw io.ReadWriter) (frame, error) {
+	if err := newEncoder(rw).Encode(typ, name, data); err != nil {
 		return nil, err
 	}
 	frm, err := newDecoder(rw).Decode()
 	if err != nil {
 		return nil, err
 	}
-	if frm.Type() == errFrame {
+	if frm.IsErrFrame() || frm.IsPermFrame() {
 		return nil, errors.New(string(frm.Payload()))
 	}
 	return frm, nil
 }
 
-func recvInitFrame(rw io.ReadWriter, check func(frame) error) (frame, error) {
-	frm, err := newDecoder(rw).Decode()
+func recvFrame(rw io.ReadWriter, check func(frame) error) (frm frame, err error) {
+	frm, err = newDecoder(rw).Decode()
 	if err != nil {
 		return nil, err
 	}
-	ft := recvFrame
-	var errData []byte
-	if err := check(frm); err != nil {
-		ft = errFrame
-		errData = []byte(err.Error())
+
+	frameTyp := recvFrameTyp
+	var frameErr []byte
+
+	if checkErr := check(frm); checkErr != nil {
+		frameTyp = permFrameTyp
+		frameErr = []byte(checkErr.Error())
+		err = checkErr
 	}
-	if err := newEncoder(rw).Encode(ft, frm.Command()+"-reply", errData); err != nil {
+
+	if err := newEncoder(rw).Encode(frameTyp, frm.Command(), frameErr); err != nil {
 		return nil, err
 	}
-	return frm, nil
+	return frm, err
 }

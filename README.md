@@ -3,10 +3,9 @@ Simple bidirectional client &lt;-> server
 
 #### TODO: 
 1. TLS/SSL
-2. JWT Auth
+2. JWT Auth - (VerifyToken, WithToken) - DONE
 3. Reconnect - DONE
 4. Remote call
-5. Middleware
 6. Graceful shutdown - DONE
 7. Error handler
 8. Options
@@ -19,6 +18,13 @@ addr := "0:5678"
 
 // server side
 wire := wirenet.New(addr, wirenet.ServerSide)
+wire.VerifyToken(func(cmd string, token []byte) error {
+    if cmd == "public" {
+       return nil 
+    }
+    return verifyToken(token)
+})
+
 wire.OpenSession(func(sess wirenet.Session) error {
      sessRegisterCh <- sess
      return nil

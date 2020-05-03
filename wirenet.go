@@ -45,9 +45,14 @@ type RetryPolicy func(min, max time.Duration, attemptNum int) time.Duration
 type Wire interface {
 	OpenSession(SessionHook)
 	CloseSession(SessionHook)
-	Listen() error
+
 	Mount(string, func(Cmd)) error
+
+	VerifyToken(func(string, []byte) error)
+	WithToken([]byte)
+
 	Close() error
+	Listen() error
 }
 
 var defaultSessionHook = func(s Session) error { return nil }
@@ -72,6 +77,9 @@ type wire struct {
 	retryWaitMax time.Duration
 	retryMax     int
 	retryPolicy  RetryPolicy
+
+	token       []byte
+	verifyToken func(string, []byte) error
 }
 
 func New(addr string, role Role, opts ...Option) (Wire, error) {
@@ -137,6 +145,14 @@ func (w *wire) Listen() (err error) {
 
 func (w *wire) Mount(name string, handler func(Cmd)) error {
 	return nil
+}
+
+func (w *wire) VerifyToken(fn func(string, []byte) error) {
+	w.verifyToken = fn
+}
+
+func (w *wire) WithToken(token []byte) {
+	w.token = token
 }
 
 func (w *wire) Close() (err error) {

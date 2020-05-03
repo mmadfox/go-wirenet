@@ -12,7 +12,6 @@ import (
 )
 
 func TestSession_Command(t *testing.T) {
-	t.Skip()
 	port, err := RandomPort()
 	assert.Nil(t, err)
 	addr := fmt.Sprintf(":%d", port)
@@ -20,6 +19,9 @@ func TestSession_Command(t *testing.T) {
 	go func() {
 		wire, err := New(addr, ServerSide)
 		assert.Nil(t, err)
+		wire.VerifyToken(func(cmd string, token []byte) error {
+			return nil
+		})
 		assert.Nil(t, wire.Listen())
 	}()
 
@@ -27,6 +29,7 @@ func TestSession_Command(t *testing.T) {
 
 	wire, err := New(addr, ClientSide)
 	assert.Nil(t, err)
+	wire.WithToken([]byte("token"))
 	wire.OpenSession(func(s Session) error {
 		cmd, err := s.Command("ls")
 		assert.Nil(t, err)

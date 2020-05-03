@@ -27,7 +27,7 @@ func TestFrame_EncodeDecode(t *testing.T) {
 	cmd := "test"
 	payload := genPayload(1000)
 
-	err := newEncoder(stream).Encode(initFrame, cmd, payload)
+	err := newEncoder(stream).Encode(initFrameTyp, cmd, payload)
 	assert.Nil(t, err)
 	assert.Equal(t, headerLength+len(cmd)+len(payload), stream.Len())
 
@@ -38,7 +38,7 @@ func TestFrame_EncodeDecode(t *testing.T) {
 	assert.Equal(t, len(cmd), frm.CommandLen())
 	assert.Equal(t, len(payload), frm.PayloadLen())
 	assert.Equal(t, payload, frm.Payload())
-	assert.Equal(t, initFrame, frm.Type())
+	assert.Equal(t, initFrameTyp, frm.Type())
 }
 
 func BenchmarkFrame_DefaultEncodeDecode(b *testing.B) {
@@ -48,7 +48,7 @@ func BenchmarkFrame_DefaultEncodeDecode(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := newEncoder(stream).Encode(initFrame, cmd, payload); err != nil {
+		if err := newEncoder(stream).Encode(initFrameTyp, cmd, payload); err != nil {
 			b.Fatal(err)
 		}
 		frm, err := newDecoder(stream).Decode()
@@ -71,7 +71,7 @@ type jsonFrame struct {
 func BenchmarkFrame_JSONEncodeDecode(b *testing.B) {
 	stream := bytes.NewBuffer(nil)
 	jf := jsonFrame{
-		Type:    initFrame,
+		Type:    initFrameTyp,
 		Payload: []byte("TEST"),
 		Cmd:     "test",
 	}
@@ -94,7 +94,7 @@ func BenchmarkFrame_JSONEncodeDecode(b *testing.B) {
 func BenchmarkFrame_PROTOEncodeDecode(b *testing.B) {
 	stream := bytes.NewBuffer(nil)
 	jf := wirenettest.Frame{
-		Type:    initFrame,
+		Type:    initFrameTyp,
 		Cmd:     "test",
 		Payload: []byte("TEST"),
 	}
