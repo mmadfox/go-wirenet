@@ -1,6 +1,7 @@
 package wirenet
 
 import (
+	"crypto/tls"
 	"io"
 	"math"
 	"time"
@@ -19,6 +20,12 @@ const (
 )
 
 type Option func(*wire)
+
+func WithTLS(conf *tls.Config) Option {
+	return func(w *wire) {
+		w.tlsConfig = conf
+	}
+}
 
 func WithRetryWait(min, max time.Duration) Option {
 	return func(w *wire) {

@@ -101,6 +101,7 @@ func (s *session) runCommand(ctx context.Context, stream *yamux.Stream) {
 	if err != nil {
 		return
 	}
+
 	// TODO:
 	log.Println("Run command", frm.Command())
 	time.Sleep(time.Second)
@@ -172,6 +173,7 @@ func (s *session) handle() {
 	}
 
 	if err := s.wire.openSessHook(s); err != nil {
+		_ = s.Close()
 		return
 	}
 

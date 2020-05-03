@@ -1,6 +1,7 @@
 package wirenet
 
 import (
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -80,6 +81,8 @@ type wire struct {
 
 	token       []byte
 	verifyToken func(string, []byte) error
+
+	tlsConfig *tls.Config
 }
 
 func New(addr string, role Role, opts ...Option) (Wire, error) {
@@ -173,7 +176,15 @@ func (w *wire) acceptClient() (err error) {
 			break
 		}
 
-		conn, er := net.Dial("tcp", w.addr)
+		var (
+			conn net.Conn
+			er   error
+		)
+		if w.tlsConfig != nil {
+			conn, err = tls.Dial("tcp", w.addr, w.tlsConfig)
+		} else {
+			conn, er = net.Dial("tcp", w.addr)
+		}
 		if er != nil {
 			er = err
 			retryWait := w.retryPolicy(
@@ -200,7 +211,12 @@ func (w *wire) acceptClient() (err error) {
 }
 
 func (w *wire) acceptServer() (err error) {
-	listener, err := net.Listen("tcp", w.addr)
+	var listener net.Listener
+	if w.tlsConfig != nil {
+		listener, err = tls.Listen("tcp", w.addr, w.tlsConfig)
+	} else {
+		listener, err = net.Listen("tcp", w.addr)
+	}
 	if err != nil {
 		return err
 	}
