@@ -2,7 +2,7 @@
 Simple bidirectional client &lt;-> server
 
 #### TODO: 
-1. TLS/SSL
+1. TLS/SSL - DONE
 2. JWT Auth - (VerifyToken, WithToken) - DONE
 3. Reconnect - DONE
 4. Remote call
