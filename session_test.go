@@ -1,7 +1,7 @@
 package wirenet
 
 import (
-	"log"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -10,6 +10,34 @@ import (
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestSession_Command(t *testing.T) {
+	t.Skip()
+	port, err := RandomPort()
+	assert.Nil(t, err)
+	addr := fmt.Sprintf(":%d", port)
+
+	go func() {
+		wire, err := New(addr, ServerSide)
+		assert.Nil(t, err)
+		assert.Nil(t, wire.Listen())
+	}()
+
+	time.Sleep(time.Second)
+
+	wire, err := New(addr, ClientSide)
+	assert.Nil(t, err)
+	wire.OpenSession(func(s Session) error {
+		cmd, err := s.Command("ls")
+		assert.Nil(t, err)
+		cmd = cmd
+		return nil
+	})
+	wire.CloseSession(func(s Session) error {
+		return nil
+	})
+	assert.Nil(t, wire.Listen())
+}
 
 func TestSession_Close(t *testing.T) {
 	t.Skip()
@@ -37,10 +65,8 @@ func TestSession_Close(t *testing.T) {
 
 			go func() {
 				time.Sleep(10 * time.Second)
-				log.Println("exec close")
 				err = sess.Close()
 				assert.Nil(t, err)
-				log.Println("after close", err)
 				return
 			}()
 		}

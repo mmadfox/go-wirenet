@@ -45,42 +45,12 @@ func TestWire_ListenClientSide(t *testing.T) {
 	time.Sleep(time.Second)
 	wire, err := New(addr, ClientSide)
 	assert.Nil(t, err)
-	//go func() {
-	//	time.Sleep(5 * time.Second)
-	//	log.Println("close client side")
-	//	wire.Close()
-	//	log.Println("done client side")
-	//}()
 	assert.Nil(t, wire.Listen())
 	time.Sleep(time.Hour)
 }
 
-func TestWire_OpenSession(t *testing.T) {
-	t.Skip()
-	//addr := ":9087"
-	//wire, err := New(addr, ServerSide)
-	//assert.Nil(t, err)
-	//var totalSess int
-	//wire.CloseSession(func(s Session) error {
-	//	totalSess--
-	//	return nil
-	//})
-	//wire.OpenSession(func(s Session) error {
-	//	totalSess++
-	//	return nil
-	//})
-	//go func() {
-	//	assert.Error(t, wire.Listen())
-	//}()
-	//time.Sleep(300 * time.Millisecond)
-	//for i := 0; i < 5; i++ {
-	//	cliConn(t, addr, true)
-	//	time.Sleep(300 * time.Millisecond)
-	//}
-	//assert.Equal(t, 0, totalSess)
-}
-
 func TestWire_Close(t *testing.T) {
+	t.Skip()
 	port, err := RandomPort()
 	assert.Nil(t, err)
 	addr := fmt.Sprintf(":%d", port)

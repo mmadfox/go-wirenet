@@ -2,6 +2,7 @@ package wirenet
 
 import (
 	"context"
+	"log"
 	"net"
 	"time"
 
@@ -13,7 +14,7 @@ type Session interface {
 	ID() uuid.UUID
 	IsClosed() bool
 	Close() error
-	Command(string) Cmd
+	Command(string) (Cmd, error)
 }
 
 const (
@@ -70,22 +71,45 @@ func (s *session) Close() error {
 	return <-errCh
 }
 
-func (s *session) Command(name string) Cmd {
-	return newCommand(name, s)
+func (s *session) Command(name string) (Cmd, error) {
+	stream, err := s.ts.OpenStream()
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = sendInitFrame(name, []byte("JWT"), stream)
+	if err != nil {
+		return nil, err
+	}
+
+	return newCommand(name, s), nil
 }
 
-func (s *session) runCommand(ctx context.Context, conn *yamux.Stream) {
-	cmd := newCommand("test", s)
+func (s *session) runCommand(ctx context.Context, stream *yamux.Stream) {
+	frm, err := recvInitFrame(stream, func(f frame) error {
+		// JWT verify
+		return nil
+	})
+	if err != nil {
+		_ = stream.Close()
+		return
+	}
+
+	log.Println("runCommand", frm.Command(), string(frm.Payload()))
+
+	cmd := newCommand("", s)
 	defer func() {
 		if err := recover(); err != nil {
 			// TODO: send to error handler
 		}
 		_ = cmd.Close()
+		stream.Close()
+		log.Println("CLOSE")
 	}()
 
-	// log.Println("startRunCommand", conn.StreamID())
+	log.Println("startRunCommand", stream.StreamID())
 	time.Sleep(10 * time.Second)
-	//log.Println("stopRunCommand", conn.StreamID())
+	log.Println("stopRunCommand", stream.StreamID())
 	cmd.Close()
 }
 
@@ -94,7 +118,12 @@ func (s *session) handle() {
 
 	defer func() {
 		close(s.waitCh)
+		_ = s.wire.closeSessHook(s)
 	}()
+
+	if err := s.wire.openSessHook(s); err != nil {
+		return
+	}
 
 	for {
 		conn, err := s.ts.AcceptStream()
