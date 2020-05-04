@@ -118,14 +118,15 @@ func (c *command) writeTo(w io.Writer) (n int64, err error) {
 }
 
 func (c *command) Close() error {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-
 	if c.isClosed {
 		return ErrClosedCommand
 	}
 
+	c.lock.Lock()
 	c.isClosed = true
+	c.lock.Unlock()
+
 	c.cmdHub.Unregister(c)
+
 	return c.stream.Close()
 }
