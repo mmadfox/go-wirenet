@@ -6,10 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
-	"sync"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/hashicorp/yamux"
 )
@@ -17,13 +14,6 @@ import (
 const (
 	ClientSide Role = 1
 	ServerSide Role = 2
-)
-
-var (
-	ErrWireClosed          = errors.New("wirenet closed")
-	ErrListenerAddrEmpty   = errors.New("wirenet: listener address is empty")
-	ErrUnknownListenerSide = errors.New("wirenet: unknown role listener")
-	ErrSessionClosed       = errors.New("wirenet: session closed")
 )
 
 type Role int
@@ -70,7 +60,7 @@ type wire struct {
 	closeSessHook SessionHook
 	transportConf *yamux.Config
 
-	hub      *sessions
+	sessHub  sessionHub
 	isClosed bool
 	closeCh  chan chan error
 
@@ -102,7 +92,7 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		role:          role,
 		openSessHook:  defaultSessionHook,
 		closeSessHook: defaultSessionHook,
-		hub:           newSessions(),
+		sessHub:       newSessionHub(),
 		closeCh:       make(chan chan error),
 
 		retryMax:     DefaultRetryMax,
@@ -255,7 +245,7 @@ func (w *wire) shutdown(conn io.Closer) {
 		return
 	}
 
-	sessLen := w.hub.len()
+	sessLen := w.sessHub.Len()
 	workerNum := sessLen
 	if sessLen > 1 {
 		workerNum /= 2
@@ -270,9 +260,9 @@ func (w *wire) shutdown(conn io.Closer) {
 	for i := 0; i < workerNum; i++ {
 		go w.shutdownSession(queueCh, doneCh, closeCh)
 	}
-	for _, sess := range w.hub.store {
+	w.sessHub.Each(func(sess *session) {
 		queueCh <- sess
-	}
+	})
 
 	shutdownErr := NewShutdownError()
 	for ei := 0; ei < sessLen; ei++ {
@@ -318,56 +308,4 @@ func validateRole(r Role) error {
 	default:
 		return ErrUnknownListenerSide
 	}
-}
-
-type sessions struct {
-	store map[uuid.UUID]*session
-	sync.RWMutex
-	counter int
-}
-
-func newSessions() *sessions {
-	return &sessions{
-		store: make(map[uuid.UUID]*session),
-	}
-}
-
-func (s *sessions) len() int {
-	s.RLock()
-	defer s.RUnlock()
-	return s.counter
-}
-
-func (s *sessions) register(sess *session) {
-	s.Lock()
-	defer s.Unlock()
-	s.store[sess.id] = sess
-	s.counter++
-}
-
-func (s *sessions) unregister(sess *session) {
-	s.Lock()
-	defer s.Unlock()
-	delete(s.store, sess.id)
-	if s.counter > 0 {
-		s.counter--
-	}
-}
-
-type ShutdownError struct {
-	Errors []error
-}
-
-func NewShutdownError() *ShutdownError {
-	return &ShutdownError{
-		Errors: make([]error, 0, 8),
-	}
-}
-
-func (e *ShutdownError) HasErrors() bool {
-	return len(e.Errors) > 0
-}
-
-func (e *ShutdownError) Error() string {
-	return "shutdown error"
 }

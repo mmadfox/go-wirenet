@@ -6,10 +6,10 @@ Simple bidirectional client &lt;-> server
 2. JWT Auth - (VerifyToken, WithToken) - DONE
 3. Reconnect - DONE
 4. Remote call
-6. Graceful shutdown - DONE
-7. Error handler
-8. Options
-9. Logger interface
+5. Graceful shutdown - DONE
+6. Error handler
+7. Options - DONE
+8. Logger interface
 
 
 #### Some design...

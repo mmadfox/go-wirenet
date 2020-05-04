@@ -2,6 +2,7 @@ package wirenet
 
 import (
 	"context"
+	"io"
 	"log"
 	"net"
 	"time"
@@ -30,7 +31,7 @@ type session struct {
 	closeCh      chan chan error
 	waitCh       chan interface{}
 	isClosed     bool
-	hub          *commands
+	cmdHub       commandHub
 	closeTimeout time.Duration
 }
 
@@ -42,10 +43,12 @@ func newSession(w *wire, conn net.Conn, sess *yamux.Session) *session {
 		id:           uuid.New(),
 		closeCh:      make(chan chan error),
 		waitCh:       make(chan interface{}),
-		hub:          newCommands(),
+		cmdHub:       newCommandHub(),
 		closeTimeout: w.sessCloseTimeout,
 	}
-	w.hub.register(s)
+
+	w.sessHub.Register(s)
+
 	return s
 }
 
@@ -66,7 +69,7 @@ func (s *session) Close() error {
 	errCh := make(chan error)
 	s.closeCh <- errCh
 
-	s.wire.hub.unregister(s)
+	s.wire.sessHub.Unregister(s)
 
 	return <-errCh
 }
@@ -77,12 +80,24 @@ func (s *session) Command(name string) (Cmd, error) {
 		return nil, err
 	}
 
-	_, err = sendFrame(name, initFrameTyp, s.wire.token, stream)
+	frm, err := sendFrame(
+		name,
+		initFrameTyp,
+		s.wire.token,
+		stream)
 	if err != nil {
+		stream.Close()
 		return nil, err
 	}
 
-	return newCommand(name, s), nil
+	if frm.Command() != name && !frm.IsRecvFrame() {
+		stream.Close()
+		return nil, io.ErrUnexpectedEOF
+	}
+
+	stream.Shrink()
+
+	return newCommand(name, stream, s.cmdHub), nil
 }
 
 func (s *session) runCommand(ctx context.Context, stream *yamux.Stream) {
@@ -205,11 +220,11 @@ func (s *session) shutdown() context.Context {
 				}
 				timeout := time.Now().Add(s.closeTimeout)
 				for {
-					if s.hub.total() <= 0 {
+					if s.cmdHub.Len() <= 0 {
 						break
 					}
 					if timeout.Unix() <= time.Now().Unix() {
-						s.forceCloseCommands()
+						s.cmdHub.Close()
 						break
 					}
 					time.Sleep(waitShutdownInterval)
@@ -222,12 +237,6 @@ func (s *session) shutdown() context.Context {
 		}
 	}()
 	return ctx
-}
-
-func (s *session) forceCloseCommands() {
-	for _, cmd := range s.hub.store {
-		_ = cmd.Close()
-	}
 }
 
 func RandomPort() (int, error) {

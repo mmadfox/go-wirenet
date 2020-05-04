@@ -7,4 +7,4 @@ covertest: deps
 	go tool cover -html=coverage.out
 
 mocks:
-	mockgen -package=wirenet -destination=listener_mock.go -source=listener.go
+	mockgen -package=wirenet -destination=hub_mock.go -source=hub.go
