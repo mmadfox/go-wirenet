@@ -41,6 +41,44 @@ func TestFrame_EncodeDecode(t *testing.T) {
 	assert.Equal(t, initFrameTyp, frm.Type())
 }
 
+func TestFrame_Is(t *testing.T) {
+	buf := bytes.NewBuffer(nil)
+	cmd := "test"
+	payload := []byte("test")
+	tests := []struct {
+		typ uint32
+	}{
+		{
+			typ: initFrameTyp,
+		},
+		{
+			typ: errFrameTyp,
+		},
+		{
+			typ: permFrameTyp,
+		},
+		{
+			typ: recvFrameTyp,
+		},
+	}
+	for _, c := range tests {
+		err := newEncoder(buf).Encode(c.typ, cmd, payload)
+		frm := frame(buf.Bytes())
+		assert.Nil(t, err)
+		switch c.typ {
+		case recvFrameTyp:
+			assert.True(t, frm.IsRecvFrame())
+		case errFrameTyp:
+			assert.True(t, frm.IsErrFrame())
+		case permFrameTyp:
+			assert.True(t, frm.IsPermFrame())
+		case initFrameTyp:
+			assert.True(t, frm.IsInitFrame())
+		}
+		buf.Reset()
+	}
+}
+
 func BenchmarkFrame_DefaultEncodeDecode(b *testing.B) {
 	stream := bytes.NewBuffer(nil)
 	cmd := "test"
