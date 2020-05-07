@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +33,10 @@ type session struct {
 	isClosed     bool
 	cmdHub       commandHub
 	closeTimeout time.Duration
+	openHook     SessionHook
+	closeHook    SessionHook
+	mu           sync.RWMutex
+	hub          sessionHub
 }
 
 func newSession(w *wire, conn net.Conn, sess *yamux.Session) *session {
@@ -44,9 +49,12 @@ func newSession(w *wire, conn net.Conn, sess *yamux.Session) *session {
 		waitCh:       make(chan interface{}),
 		cmdHub:       newCommandHub(),
 		closeTimeout: w.sessCloseTimeout,
+		openHook:     w.openSessHook,
+		closeHook:    w.closeSessHook,
+		hub:          w.sessHub,
 	}
 
-	w.sessHub.Register(s)
+	s.hub.Register(s)
 
 	return s
 }
@@ -56,19 +64,24 @@ func (s *session) ID() uuid.UUID {
 }
 
 func (s *session) IsClosed() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.isClosed
 }
 
 func (s *session) Close() error {
-	if s.isClosed {
+	if s.IsClosed() {
 		return ErrSessionClosed
 	}
 
+	s.mu.Lock()
 	s.isClosed = true
+	s.mu.Unlock()
+
 	errCh := make(chan error)
 	s.closeCh <- errCh
 
-	s.wire.sessHub.Unregister(s)
+	s.hub.Unregister(s)
 
 	return <-errCh
 }
@@ -120,6 +133,8 @@ func (s *session) runCommand(ctx context.Context, stream *yamux.Stream) {
 	if !ok {
 		return
 	}
+
+	stream.Shrink()
 
 	cmd := newCommand(frm.Command(), stream, s.cmdHub)
 	if err := handler.Serve(cmd); err != nil {
@@ -182,7 +197,7 @@ func (s *session) tokenVerificationServerSide() error {
 func (s *session) handle() {
 	defer func() {
 		close(s.waitCh)
-		_ = s.wire.closeSessHook(s)
+		_ = s.closeHook(s)
 	}()
 
 	ctx := s.shutdown()
@@ -192,7 +207,7 @@ func (s *session) handle() {
 		return
 	}
 
-	if err := s.wire.openSessHook(s); err != nil {
+	if err := s.openHook(s); err != nil {
 		_ = s.Close()
 		return
 	}

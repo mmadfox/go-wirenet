@@ -29,8 +29,8 @@ func TestSessHub(t *testing.T) {
 		hub.Register(&session{id: uuid.New()})
 	}
 	assert.Equal(t, max, hub.Len())
-	hub.Each(func(sess *session) {
+	for _, sess := range hub.List() {
 		hub.Unregister(sess)
-	})
+	}
 	assert.Equal(t, 0, hub.Len())
 }

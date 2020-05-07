@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/yamux"
@@ -80,6 +81,7 @@ type wire struct {
 	tlsConfig *tls.Config
 
 	handlers map[string]Handler
+	mu       sync.RWMutex
 }
 
 func New(addr string, role Role, opts ...Option) (Wire, error) {
@@ -125,10 +127,14 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 }
 
 func (w *wire) OpenSession(hook SessionHook) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.openSessHook = hook
 }
 
 func (w *wire) CloseSession(hook SessionHook) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.closeSessHook = hook
 }
 
@@ -160,6 +166,7 @@ func (w *wire) Close() (err error) {
 	if w.isClosed {
 		return ErrWireClosed
 	}
+
 	w.isClosed = true
 
 	errCh := make(chan error)
@@ -170,7 +177,7 @@ func (w *wire) Close() (err error) {
 func (w *wire) acceptClient() (err error) {
 	for i := 0; ; i++ {
 		attemptNum := i
-		if attemptNum > w.retryMax {
+		if attemptNum > w.retryMax || w.isClosed {
 			break
 		}
 
@@ -230,6 +237,7 @@ func (w *wire) acceptServer() (err error) {
 			}
 			break
 		}
+
 		if w.isClosed {
 			_ = conn.Close()
 			continue
@@ -268,9 +276,9 @@ func (w *wire) shutdown(conn io.Closer) {
 	for i := 0; i < workerNum; i++ {
 		go w.shutdownSession(queueCh, doneCh, closeCh)
 	}
-	w.sessHub.Each(func(sess *session) {
+	for _, sess := range w.sessHub.List() {
 		queueCh <- sess
-	})
+	}
 
 	shutdownErr := NewShutdownError()
 	for ei := 0; ei < sessLen; ei++ {

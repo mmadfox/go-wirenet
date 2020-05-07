@@ -17,7 +17,7 @@ type sessionHub interface {
 	Len() int
 	Register(sess *session)
 	Unregister(sess *session)
-	Each(func(sess *session))
+	List() []*session
 }
 
 type cmdHub struct {
@@ -60,7 +60,7 @@ func (c *cmdHub) Close() {
 
 type sessHub struct {
 	store map[uuid.UUID]*session
-	sync.RWMutex
+	mu    sync.RWMutex
 }
 
 func newSessionHub() sessionHub {
@@ -70,28 +70,29 @@ func newSessionHub() sessionHub {
 }
 
 func (s *sessHub) Len() int {
-	s.RLock()
-	defer s.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return len(s.store)
 }
 
 func (s *sessHub) Register(sess *session) {
-	s.Lock()
-	defer s.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.store[sess.id] = sess
 }
 
 func (s *sessHub) Unregister(sess *session) {
-	s.Lock()
-	defer s.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.store, sess.id)
 }
 
-func (s *sessHub) Each(fn func(sess *session)) {
-	s.RLock()
-	sessions := s.store
-	s.RUnlock()
-	for _, sess := range sessions {
-		fn(sess)
+func (s *sessHub) List() (l []*session) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	l = make([]*session, 0, len(s.store))
+	for _, sess := range s.store {
+		l = append(l, sess)
 	}
+	return l
 }
