@@ -3,7 +3,6 @@ package wirenet
 import (
 	"context"
 	"io"
-	"log"
 	"net"
 	"time"
 
@@ -117,10 +116,16 @@ func (s *session) runCommand(ctx context.Context, stream *yamux.Stream) {
 		return
 	}
 
-	// TODO:
-	log.Println("Run command", frm.Command())
-	time.Sleep(time.Second)
-	frm = frm
+	handler, ok := s.wire.handlers[frm.Command()]
+	if !ok {
+		return
+	}
+
+	cmd := newCommand(frm.Command(), stream, s.cmdHub)
+	if err := handler.Serve(cmd); err != nil {
+		// TODO: write error
+	}
+	_ = cmd.Close()
 }
 
 func (s *session) tokenVerification() (err error) {

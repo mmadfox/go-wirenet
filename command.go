@@ -1,6 +1,7 @@
 package wirenet
 
 import (
+	"bytes"
 	"io"
 	"sync"
 
@@ -13,6 +14,8 @@ type Cmd interface {
 	io.Closer
 	io.ReaderFrom
 	io.WriterTo
+
+	Call(arg []byte) (resp []byte, err error)
 }
 
 type command struct {
@@ -35,6 +38,26 @@ func newCommand(name string, rwc io.ReadWriteCloser, cmdHub commandHub) *command
 	}
 	cmdHub.Register(cmd)
 	return cmd
+}
+
+func (c *command) Call(arg []byte) (resp []byte, err error) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	n, err := c.readFrom(bytes.NewReader(arg))
+	if err != nil {
+		return nil, err
+	}
+	if n != int64(len(arg)) {
+		return nil, io.ErrShortWrite
+	}
+
+	buf := new(bytes.Buffer)
+	n, err = c.writeTo(buf)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func (c *command) ReadFrom(r io.Reader) (n int64, err error) {

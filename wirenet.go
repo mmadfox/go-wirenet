@@ -33,11 +33,16 @@ func (s Role) String() (side string) {
 type SessionHook func(Session) error
 type RetryPolicy func(min, max time.Duration, attemptNum int) time.Duration
 
+type Handler interface {
+	Name() string
+	Serve(Cmd) error
+}
+
 type Wire interface {
 	OpenSession(SessionHook)
 	CloseSession(SessionHook)
 
-	Mount(string, func(Cmd)) error
+	Mount(Handler)
 
 	VerifyToken(func(string, []byte) error)
 	WithToken([]byte)
@@ -73,6 +78,8 @@ type wire struct {
 	verifyToken func(string, []byte) error
 
 	tlsConfig *tls.Config
+
+	handlers map[string]Handler
 }
 
 func New(addr string, role Role, opts ...Option) (Wire, error) {
@@ -83,7 +90,8 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		return nil, ErrListenerAddrEmpty
 	}
 	wire := &wire{
-		addr: addr,
+		addr:     addr,
+		handlers: make(map[string]Handler),
 
 		readTimeout:      DefaultReadTimeout,
 		writeTimeout:     DefaultWriteTimeout,
@@ -136,8 +144,8 @@ func (w *wire) Listen() (err error) {
 	return err
 }
 
-func (w *wire) Mount(name string, handler func(Cmd)) error {
-	return nil
+func (w *wire) Mount(h Handler) {
+	w.handlers[h.Name()] = h
 }
 
 func (w *wire) VerifyToken(fn func(string, []byte) error) {
