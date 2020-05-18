@@ -100,6 +100,61 @@ func TestWire_StreamClientToServerSomeData(t *testing.T) {
 	assert.Nil(t, wireSrv.Close())
 }
 
+func TestWire_StreamServerToClient(t *testing.T) {
+	addr := genAddr(t)
+	listen := make(chan struct{})
+	// server side
+	go func() {
+		sessions := make(chan uuid.UUID)
+		srv, err := NewServer(addr,
+			WithOpenSessionHook(func(u uuid.UUID) {
+				sessions <- u
+			}),
+			WithOnConnect(func(closer io.Closer) {
+				close(listen)
+			}))
+		assert.Nil(t, err)
+		go func() {
+			var sessCount int
+			for sessCount < 5 {
+				select {
+				case <-sessions:
+					sessCount++
+				}
+			}
+			for c := 0; c < sessCount; c++ {
+				st, err := srv.OpenStream(fmt.Sprintf("cat-%d", c))
+				assert.Nil(t, err)
+				payload := fmt.Sprintf("string%d", c)
+				n, err := st.Write([]byte(payload))
+				assert.Nil(t, err)
+				assert.Equal(t, len(payload), n)
+			}
+		}()
+		assert.Nil(t, srv.Listen())
+	}()
+	<-listen
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(n int) {
+			cli, err := NewClient(addr)
+			assert.Nil(t, err)
+			cli.MountStream(fmt.Sprintf("cat-%d", n), func(s Stream) {
+				str := make([]byte, 7)
+				n, err := s.Read(str)
+				assert.Nil(t, err)
+				assert.NotEmpty(t, n)
+				assert.Contains(t, string(str), "string")
+				wg.Done()
+			})
+			assert.Nil(t, cli.Listen())
+		}(i)
+	}
+	wg.Wait()
+}
+
 func TestWire_StreamClientToServerJSON(t *testing.T) {
 	addr := genAddr(t)
 	listen := make(chan struct{})
