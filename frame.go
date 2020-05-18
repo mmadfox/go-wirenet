@@ -16,7 +16,8 @@ const (
 	hdrLen       = 4
 	headerLength = hdrLen * 3
 
-	tokenVerification = "tokenVerification"
+	authorization = "authorization"
+	commands      = "commands"
 )
 
 type frame []byte
@@ -179,10 +180,12 @@ func recvFrame(rw io.ReadWriter, check func(frame) error) (frm frame, err error)
 	frameTyp := recvFrameTyp
 	var frameErr []byte
 
-	if checkErr := check(frm); checkErr != nil {
-		frameTyp = permFrameTyp
-		frameErr = []byte(checkErr.Error())
-		err = checkErr
+	if check != nil {
+		if checkErr := check(frm); checkErr != nil {
+			frameTyp = permFrameTyp
+			frameErr = []byte(checkErr.Error())
+			err = checkErr
+		}
 	}
 
 	if err := newEncoder(rw).Encode(frameTyp, frm.Command(), frameErr); err != nil {

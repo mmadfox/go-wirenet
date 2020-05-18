@@ -8,7 +8,7 @@ import (
 var (
 	ErrClosedCommand       = errors.New("wirenet: read/write on closed command")
 	ErrWireClosed          = errors.New("wirenet closed")
-	ErrListenerAddrEmpty   = errors.New("wirenet: listener address is empty")
+	ErrAddrEmpty           = errors.New("wirenet: listener address is empty")
 	ErrUnknownListenerSide = errors.New("wirenet: unknown role listener")
 	ErrSessionClosed       = errors.New("wirenet: session closed")
 )
@@ -23,7 +23,11 @@ func NewShutdownError() *ShutdownError {
 	}
 }
 
-func (e *ShutdownError) HasErrors() bool {
+func (e *ShutdownError) Add(er error) {
+	e.Errors = append(e.Errors, er)
+}
+
+func (e *ShutdownError) IsFilled() bool {
 	return len(e.Errors) > 0
 }
 

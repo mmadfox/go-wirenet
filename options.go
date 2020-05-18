@@ -21,6 +21,24 @@ const (
 
 type Option func(*wire)
 
+func WithOnConnect(fn func(io.Closer)) Option {
+	return func(w *wire) {
+		w.onListen = fn
+	}
+}
+
+func WithOpenSessionHook(hook SessionHook) Option {
+	return func(w *wire) {
+		w.openSessHook = hook
+	}
+}
+
+func WithCloseSessionHook(hook SessionHook) Option {
+	return func(w *wire) {
+		w.closeSessHook = hook
+	}
+}
+
 func WithTLS(conf *tls.Config) Option {
 	return func(w *wire) {
 		w.tlsConfig = conf

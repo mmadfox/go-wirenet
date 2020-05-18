@@ -29,5 +29,5 @@ func TestShutdownError_HasErrors(t *testing.T) {
 	err.Errors = append(err.Errors, errors.New("some error0"))
 	err.Errors = append(err.Errors, errors.New("some error1"))
 	err.Errors = append(err.Errors, errors.New("some error2"))
-	assert.True(t, err.HasErrors())
+	assert.True(t, err.IsFilled())
 }

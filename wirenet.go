@@ -2,12 +2,14 @@ package wirenet
 
 import (
 	"crypto/tls"
-	"errors"
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/hashicorp/yamux"
 )
@@ -31,28 +33,26 @@ func (s Role) String() (side string) {
 	return side
 }
 
-type SessionHook func(Session) error
+type SessionHook func(uuid.UUID)
 type RetryPolicy func(min, max time.Duration, attemptNum int) time.Duration
 
-type Handler interface {
-	Name() string
-	Serve(Cmd) error
+type Handler func(Stream)
+
+type Streamer interface {
+	Stream(name string) (Stream, error)
 }
 
+type Sessions map[uuid.UUID]Session
+
 type Wire interface {
-	OpenSession(SessionHook)
-	CloseSession(SessionHook)
-
-	Mount(Handler)
-
-	VerifyToken(func(string, []byte) error)
-	WithToken([]byte)
-
+	Sessions() Sessions
+	MountStream(name string, h Handler)
+	OpenStream(name string) (Stream, error)
 	Close() error
 	Listen() error
 }
 
-var defaultSessionHook = func(s Session) error { return nil }
+const cmdSep = ";"
 
 type wire struct {
 	addr string
@@ -64,16 +64,21 @@ type wire struct {
 	role          Role
 	openSessHook  SessionHook
 	closeSessHook SessionHook
+	onListen      func(io.Closer)
 	transportConf *yamux.Config
 
-	sessHub  sessionHub
-	isClosed bool
-	closeCh  chan chan error
+	closed  bool
+	closeCh chan chan error
+	waitCh  chan struct{}
 
 	retryWaitMin time.Duration
 	retryWaitMax time.Duration
 	retryMax     int
 	retryPolicy  RetryPolicy
+
+	registerSess   chan Session
+	unregisterSess chan Session
+	sessions       Sessions
 
 	token       []byte
 	verifyToken func(string, []byte) error
@@ -89,7 +94,7 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		return nil, err
 	}
 	if len(addr) == 0 {
-		return nil, ErrListenerAddrEmpty
+		return nil, ErrAddrEmpty
 	}
 	wire := &wire{
 		addr:     addr,
@@ -99,10 +104,13 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		writeTimeout:     DefaultWriteTimeout,
 		sessCloseTimeout: DefaultSessionCloseTimeout,
 
+		sessions:       make(Sessions),
+		registerSess:   make(chan Session, 1),
+		unregisterSess: make(chan Session, 1),
+
 		role:          role,
-		openSessHook:  defaultSessionHook,
-		closeSessHook: defaultSessionHook,
-		sessHub:       newSessionHub(),
+		openSessHook:  func(_ uuid.UUID) {},
+		closeSessHook: func(_ uuid.UUID) {},
 		closeCh:       make(chan chan error),
 
 		retryMax:     DefaultRetryMax,
@@ -123,19 +131,43 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		opt(wire)
 	}
 
+	go wire.sessionManagement()
+
 	return wire, nil
 }
 
-func (w *wire) OpenSession(hook SessionHook) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.openSessHook = hook
+func NewServer(addr string, opts ...Option) (Wire, error) {
+	return New(addr, ServerSide, opts...)
 }
 
-func (w *wire) CloseSession(hook SessionHook) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.closeSessHook = hook
+func NewClient(addr string, opts ...Option) (Wire, error) {
+	return New(addr, ClientSide, opts...)
+}
+
+func (w *wire) OpenStream(name string) (Stream, error) {
+	if len(w.sessions) == 0 || w.isClosed() {
+		return nil, ErrSessionClosed
+	}
+
+	var sess Session
+	isClientSide := w.role == ClientSide
+	isServerSide := w.role == ServerSide
+	for _, s := range w.sessions {
+		if isClientSide || (isServerSide && s.HasStream(name)) {
+			sess = s
+			break
+		}
+	}
+	if sess == nil {
+		return nil, ErrSessionClosed
+	}
+	return sess.OpenStream(name)
+}
+
+func (w *wire) Sessions() Sessions {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.sessions
 }
 
 func (w *wire) Listen() (err error) {
@@ -144,40 +176,48 @@ func (w *wire) Listen() (err error) {
 		err = w.acceptClient()
 	case ServerSide:
 		err = w.acceptServer()
-	default:
-		err = ErrUnknownListenerSide
 	}
 	return err
 }
 
-func (w *wire) Mount(h Handler) {
-	w.handlers[h.Name()] = h
+func (w *wire) MountStream(name string, h Handler) {
+	w.handlers[name] = h
 }
 
-func (w *wire) VerifyToken(fn func(string, []byte) error) {
-	w.verifyToken = fn
-}
+//func (w *wire) VerifyToken(fn func(string, []byte) error) {
+//	w.verifyToken = fn
+//}
 
-func (w *wire) WithToken(token []byte) {
-	w.token = token
+//func (w *wire) WithToken(token []byte) {
+//	w.token = token
+//}
+
+func (w *wire) isClosed() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.closed
 }
 
 func (w *wire) Close() (err error) {
-	if w.isClosed {
+	if w.isClosed() {
 		return ErrWireClosed
 	}
 
-	w.isClosed = true
+	w.mu.Lock()
+	w.closed = true
+	w.mu.Unlock()
 
 	errCh := make(chan error)
 	w.closeCh <- errCh
-	return <-errCh
+	err = <-errCh
+
+	return err
 }
 
 func (w *wire) acceptClient() (err error) {
 	for i := 0; ; i++ {
 		attemptNum := i
-		if attemptNum > w.retryMax || w.isClosed {
+		if attemptNum > w.retryMax || w.isClosed() {
 			break
 		}
 
@@ -206,39 +246,59 @@ func (w *wire) acceptClient() (err error) {
 			break
 		}
 
-		session := newSession(w, conn, wrapConn)
-		go session.handle()
-		go w.shutdown(wrapConn)
+		if authErr := w.sendInitFrames(wrapConn); authErr != nil {
+			err = authErr
+			break
+		}
 
-		<-session.waitCh
+		w.waitCh = make(chan struct{})
+
+		go w.shutdown(wrapConn)
+		if w.onListen != nil {
+			w.onListen(w)
+		}
+
+		openSession(wrapConn, w, nil)
+
+		<-w.waitCh
 	}
 	return err
 }
 
-func (w *wire) acceptServer() (err error) {
-	var listener net.Listener
+func (w *wire) listen() (listener net.Listener, err error) {
 	if w.tlsConfig != nil {
 		listener, err = tls.Listen("tcp", w.addr, w.tlsConfig)
 	} else {
 		listener, err = net.Listen("tcp", w.addr)
 	}
+	return listener, err
+}
+
+func (w *wire) acceptServer() (err error) {
+	listener, err := w.listen()
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
 
 	go w.shutdown(listener)
+	if w.onListen != nil {
+		w.onListen(w)
+	}
 
+	var closed bool
 	for {
+		closed = w.isClosed()
 		conn, acceptErr := listener.Accept()
 		if acceptErr != nil {
-			if !w.isClosed {
+			if !closed {
 				err = acceptErr
 			}
 			break
 		}
 
-		if w.isClosed {
+		// close all new connections
+		if closed {
 			_ = conn.Close()
 			continue
 		}
@@ -249,8 +309,13 @@ func (w *wire) acceptServer() (err error) {
 			break
 		}
 
-		session := newSession(w, conn, wrapConn)
-		go session.handle()
+		commandNames, authErr := w.recvInitFrames(wrapConn)
+		if authErr != nil {
+			_ = conn.Close()
+			continue
+		}
+
+		openSession(wrapConn, w, commandNames)
 	}
 	return err
 }
@@ -261,61 +326,143 @@ func (w *wire) shutdown(conn io.Closer) {
 		return
 	}
 
-	sessLen := w.sessHub.Len()
-	workerNum := sessLen
-	if sessLen > 1 {
-		workerNum /= 2
-	}
+	//sessLen := w.sessHub.Len()
+	//workerNum := sessLen
+	//if sessLen > 1 {
+	//	workerNum /= 2
+	//}
 
-	var (
-		queueCh = make(chan *session, workerNum)
-		doneCh  = make(chan error, sessLen)
-		closeCh = make(chan interface{})
-	)
-
-	for i := 0; i < workerNum; i++ {
-		go w.shutdownSession(queueCh, doneCh, closeCh)
-	}
-	for _, sess := range w.sessHub.List() {
-		queueCh <- sess
-	}
-
+	//var (
+	//	queueCh = make(chan *session, workerNum)
+	//	doneCh  = make(chan error, sessLen)
+	//	closeCh = make(chan interface{})
+	//)
+	//
+	//for i := 0; i < workerNum; i++ {
+	//	go w.shutdownSession(queueCh, doneCh, closeCh)
+	//}
+	//for _, sess := range w.sessHub.List() {
+	//	queueCh <- sess
+	//}
+	//
 	shutdownErr := NewShutdownError()
-	for ei := 0; ei < sessLen; ei++ {
-		err := <-doneCh
-		if err != nil {
-			shutdownErr.Errors = append(shutdownErr.Errors, err)
-		}
-	}
+	//for ei := 0; ei < sessLen; ei++ {
+	//	err := <-doneCh
+	//	if err != nil {
+	//		shutdownErr.Errors = append(shutdownErr.Errors, err)
+	//	}
+	//}
 
-	close(closeCh)
-
+	//close(closeCh)
+	//
 	if err := conn.Close(); err != nil {
-		shutdownErr.Errors = append(shutdownErr.Errors, err)
+		shutdownErr.Add(err)
 	}
-	if !shutdownErr.HasErrors() {
+	if !shutdownErr.IsFilled() {
 		shutdownErr = nil
+	}
+
+	if w.role == ClientSide {
+		close(w.waitCh)
 	}
 	errCh <- shutdownErr
 }
 
-func (w *wire) shutdownSession(q chan *session, e chan error, c chan interface{}) {
+func (w *wire) sessionManagement() {
 	for {
 		select {
-		case sess, ok := <-q:
+		case sess, ok := <-w.registerSess:
 			if !ok {
 				return
 			}
-			err := sess.Close()
-			if errors.Is(err, ErrSessionClosed) {
-				err = nil
+
+			w.sessions[sess.ID()] = sess
+			w.openSessHook(sess.ID())
+
+		case sess, ok := <-w.unregisterSess:
+			if !ok {
+				return
 			}
-			e <- err
-		case <-c:
-			return
+
+			w.closeSessHook(sess.ID())
+			delete(w.sessions, sess.ID())
 		}
 	}
 }
+
+func (w *wire) sendInitFrames(conn *yamux.Session) error {
+	stream, err := conn.OpenStream()
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	auth, err := sendFrame(authorization, permFrameTyp, w.token, stream)
+	if err != nil {
+		return err
+	}
+	if auth.Command() != authorization && !auth.IsRecvFrame() {
+		return io.ErrUnexpectedEOF
+	}
+
+	stream.Shrink()
+	commandNames := make([]string, 0, len(w.handlers))
+	for name, _ := range w.handlers {
+		commandNames = append(commandNames, name)
+	}
+	payload := []byte(strings.Join(commandNames, cmdSep))
+	cmd, err := sendFrame(commands, initFrameTyp, payload, stream)
+	if err != nil {
+		return err
+	}
+	if cmd.Command() != commands && !auth.IsRecvFrame() {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+
+func (w *wire) recvInitFrames(conn *yamux.Session) ([]string, error) {
+	stream, err := conn.AcceptStream()
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+
+	if _, err := recvFrame(stream, func(f frame) error {
+		if w.verifyToken == nil {
+			return nil
+		}
+		return w.verifyToken(f.Command(), f.Payload())
+	}); err != nil {
+		return nil, err
+	}
+
+	stream.Shrink()
+
+	cmd, err := recvFrame(stream, nil)
+	if err != nil {
+		return nil, err
+	}
+	return strings.Split(string(cmd.Payload()), cmdSep), nil
+}
+
+//func (w *wire) shutdownSession(q chan *session, e chan error, c chan interface{}) {
+//	for {
+//		select {
+//		case sess, ok := <-q:
+//			if !ok {
+//				return
+//			}
+//			err := sess.Close()
+//			if errors.Is(err, ErrSessionClosed) {
+//				err = nil
+//			}
+//			e <- err
+//		case <-c:
+//			return
+//		}
+//	}
+//}
 
 func validateRole(r Role) error {
 	switch r {
