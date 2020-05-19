@@ -8,6 +8,7 @@ import (
 var (
 	ErrClosedCommand       = errors.New("wirenet: read/write on closed command")
 	ErrSessionNotFound     = errors.New("wirenet: session not found")
+	ErrStreamNotFound      = errors.New("wirenet: stream not found")
 	ErrWireClosed          = errors.New("wirenet closed")
 	ErrAddrEmpty           = errors.New("wirenet: listener address is empty")
 	ErrUnknownListenerSide = errors.New("wirenet: unknown role listener")

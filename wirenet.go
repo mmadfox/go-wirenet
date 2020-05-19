@@ -55,8 +55,6 @@ type Wire interface {
 	Listen() error
 }
 
-const cmdSep = "+"
-
 type wire struct {
 	addr string
 
@@ -176,21 +174,9 @@ func (w *wire) FindStream(name string) (Stream, error) {
 	if len(w.sessions) == 0 || w.isClosed() {
 		return nil, ErrSessionClosed
 	}
-
-	// TODO: add index map[streamName]Session
-
-	var sess Session
-	isClientSide := w.role == ClientSide
-	isServerSide := w.role == ServerSide
-
-	for _, s := range w.sessions {
-		if isClientSide || (isServerSide && s.HasStream(name)) {
-			sess = s
-			break
-		}
-	}
-	if sess == nil {
-		return nil, ErrSessionNotFound
+	sess, found := w.streamIndex[name]
+	if !found {
+		return nil, ErrStreamNotFound
 	}
 	return sess.OpenStream(name)
 }
@@ -214,14 +200,6 @@ func (w *wire) Listen() (err error) {
 func (w *wire) MountStream(name string, h Handler) {
 	w.handlers[name] = h
 }
-
-//func (w *wire) VerifyToken(fn func(string, []byte) error) {
-//	w.verifyToken = fn
-//}
-
-//func (w *wire) WithToken(token []byte) {
-//	w.token = token
-//}
 
 func (w *wire) isClosed() bool {
 	w.mu.RLock()
@@ -252,17 +230,8 @@ func (w *wire) acceptClient() (err error) {
 			break
 		}
 
-		var (
-			conn net.Conn
-			er   error
-		)
-		if w.tlsConfig != nil {
-			conn, err = tls.Dial("tcp", w.addr, w.tlsConfig)
-		} else {
-			conn, er = net.Dial("tcp", w.addr)
-		}
-		if er != nil {
-			er = err
+		conn, err := w.dial()
+		if err != nil {
 			retryWait := w.retryPolicy(
 				w.retryWaitMin,
 				w.retryWaitMax,
@@ -304,6 +273,15 @@ func (w *wire) listen() (listener net.Listener, err error) {
 		listener, err = net.Listen("tcp", w.addr)
 	}
 	return listener, err
+}
+
+func (w *wire) dial() (conn net.Conn, err error) {
+	if w.tlsConfig != nil {
+		conn, err = tls.Dial("tcp", w.addr, w.tlsConfig)
+	} else {
+		conn, err = net.Dial("tcp", w.addr)
+	}
+	return
 }
 
 func (w *wire) acceptServer() (err error) {
@@ -424,7 +402,6 @@ func (w *wire) sessionManagement() {
 			}
 
 			w.closeSessHook(sess.ID())
-
 			delete(w.sessions, sess.ID())
 		}
 	}
