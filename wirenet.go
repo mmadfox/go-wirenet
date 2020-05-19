@@ -33,21 +33,19 @@ func (s Role) String() (side string) {
 	return side
 }
 
-type SessionHook func(uuid.UUID)
-type RetryPolicy func(min, max time.Duration, attemptNum int) time.Duration
-
-type Handler func(Stream)
-
-type Streamer interface {
-	Stream(name string) (Stream, error)
-}
-
-type Sessions map[uuid.UUID]Session
+type (
+	SessionHook func(uuid.UUID)
+	RetryPolicy func(min, max time.Duration, attemptNum int) time.Duration
+	Handler     func(Stream)
+	Sessions    map[uuid.UUID]Session
+)
 
 type Wire interface {
 	Sessions() Sessions
+	Session(sessionID uuid.UUID) (Session, error)
+	OpenStream(sessionID uuid.UUID, name string) (Stream, error)
 	MountStream(name string, h Handler)
-	OpenStream(name string) (Stream, error)
+	FindStream(name string) (Stream, error)
 	Close() error
 	Listen() error
 }
@@ -144,7 +142,29 @@ func NewClient(addr string, opts ...Option) (Wire, error) {
 	return New(addr, ClientSide, opts...)
 }
 
-func (w *wire) OpenStream(name string) (Stream, error) {
+func (w *wire) Session(sid uuid.UUID) (Session, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	sess, found := w.sessions[sid]
+	if !found {
+		return nil, ErrSessionNotFound
+	}
+	return sess, nil
+}
+
+func (w *wire) OpenStream(sessionID uuid.UUID, name string) (Stream, error) {
+	if len(w.sessions) == 0 || w.isClosed() {
+		return nil, ErrSessionClosed
+	}
+	sess, found := w.sessions[sessionID]
+	if !found {
+		return nil, ErrSessionNotFound
+	}
+	return sess.OpenStream(name)
+}
+
+func (w *wire) FindStream(name string) (Stream, error) {
 	if len(w.sessions) == 0 || w.isClosed() {
 		return nil, ErrSessionClosed
 	}
@@ -152,6 +172,7 @@ func (w *wire) OpenStream(name string) (Stream, error) {
 	var sess Session
 	isClientSide := w.role == ClientSide
 	isServerSide := w.role == ServerSide
+
 	for _, s := range w.sessions {
 		if isClientSide || (isServerSide && s.HasStream(name)) {
 			sess = s
@@ -159,7 +180,7 @@ func (w *wire) OpenStream(name string) (Stream, error) {
 		}
 	}
 	if sess == nil {
-		return nil, ErrSessionClosed
+		return nil, ErrSessionNotFound
 	}
 	return sess.OpenStream(name)
 }

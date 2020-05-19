@@ -41,6 +41,33 @@ func TestWire_New(t *testing.T) {
 	assert.Equal(t, ErrAddrEmpty, err)
 }
 
+//func TestWire_Stream(t *testing.T) {
+//	addr := genAddr(t)
+//	listen := make(chan struct{})
+//	var wireSrv Wire
+//	go func() {
+//		sessCh := make(chan uuid.UUID)
+//		srv, err := NewServer(addr,
+//			WithOnConnect(func(_ io.Closer) {
+//				close(listen)
+//			}), WithOpenSessionHook(func(u uuid.UUID) {
+//
+//			}))
+//		assert.Nil(t, err)
+//		go func() {
+//			for {
+//				sid := <-sessCh
+//				sess, err := srv.Session(sid)
+//				assert.Nil(t, err)
+//				ls := sess.Stream("balance-recalc")
+//			}
+//		}()
+//		wireSrv = srv
+//		srv.Listen()
+//	}()
+//	<-listen
+//}
+
 func TestWire_StreamClientToServerSomeData(t *testing.T) {
 	addr := genAddr(t)
 	listen := make(chan struct{})
@@ -76,7 +103,7 @@ func TestWire_StreamClientToServerSomeData(t *testing.T) {
 			go func() {
 				<-init
 				defer wg.Done()
-				ls, err := cli.OpenStream("ls")
+				ls, err := cli.FindStream("ls")
 				assert.Nil(t, err)
 				buf := make([]byte, 32)
 				total := 0
@@ -128,7 +155,7 @@ func TestWire_StreamServerToClient(t *testing.T) {
 				}
 			}
 			for c := 0; c < sessCount; c++ {
-				st, err := srv.OpenStream(fmt.Sprintf("cat-%d", c))
+				st, err := srv.FindStream(fmt.Sprintf("host%d:cat", c))
 				assert.Nil(t, err)
 				payload := fmt.Sprintf("string%d", c)
 				n, err := st.Write([]byte(payload))
@@ -146,7 +173,7 @@ func TestWire_StreamServerToClient(t *testing.T) {
 		go func(n int) {
 			cli, err := NewClient(addr)
 			assert.Nil(t, err)
-			cli.MountStream(fmt.Sprintf("cat-%d", n), func(s Stream) {
+			cli.MountStream(fmt.Sprintf("host%d:cat", n), func(s Stream) {
 				str := make([]byte, 7)
 				n, err := s.Read(str)
 				assert.Nil(t, err)
@@ -195,7 +222,7 @@ func TestWire_StreamClientToServerJSON(t *testing.T) {
 	}))
 	go func() {
 		<-init
-		ls, err := cli.OpenStream("ls")
+		ls, err := cli.FindStream("ls")
 		assert.Nil(t, err)
 		var res want
 		err = json.NewDecoder(ls).Decode(&res)
@@ -235,7 +262,7 @@ func TestWire_StreamClientToServer(t *testing.T) {
 	}))
 	go func() {
 		<-init
-		ls, err := cli.OpenStream("ls")
+		ls, err := cli.FindStream("ls")
 		assert.Nil(t, err)
 		buf := bytes.NewBuffer(nil)
 		n, err := ls.WriteTo(buf)
