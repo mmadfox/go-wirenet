@@ -28,9 +28,9 @@ type Role int
 func (s Role) String() (side string) {
 	switch s {
 	case ClientSide:
-		side = "client side wire"
+		side = "client side"
 	case ServerSide:
-		side = "server side wire"
+		side = "server side"
 	default:
 		side = "unknown"
 	}
@@ -38,7 +38,7 @@ func (s Role) String() (side string) {
 }
 
 type (
-	SessionHook    func(uuid.UUID)
+	SessionHook    func(Session)
 	RetryPolicy    func(min, max time.Duration, attemptNum int) time.Duration
 	Handler        func(Stream)
 	Sessions       map[uuid.UUID]Session
@@ -48,11 +48,10 @@ type (
 type Wire interface {
 	Sessions() Sessions
 	Session(sessionID uuid.UUID) (Session, error)
-	OpenStream(sessionID uuid.UUID, name string) (Stream, error)
-	MountStream(name string, h Handler)
-	FindStream(name string) (Stream, error)
+	Mount(name string, h Handler)
+	Stream(name string) (Stream, error)
 	Close() error
-	Listen() error
+	Connect() error
 }
 
 type wire struct {
@@ -65,7 +64,7 @@ type wire struct {
 	role          Role
 	openSessHook  SessionHook
 	closeSessHook SessionHook
-	onListen      func(io.Closer)
+	onConnect     func(io.Closer)
 	transportConf *yamux.Config
 
 	closed  bool
@@ -80,7 +79,6 @@ type wire struct {
 	registerSess   chan Session
 	unregisterSess chan Session
 	sessions       Sessions
-	clientSess     Session
 	streamIndex    map[string]Session
 
 	token       []byte
@@ -113,9 +111,10 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		unregisterSess: make(chan Session, 1),
 
 		role:          role,
-		openSessHook:  func(_ uuid.UUID) {},
-		closeSessHook: func(_ uuid.UUID) {},
+		openSessHook:  func(Session) {},
+		closeSessHook: func(Session) {},
 		closeCh:       make(chan chan error),
+		onConnect:     func(_ io.Closer) {},
 
 		retryMax:     DefaultRetryMax,
 		retryWaitMin: DefaultRetryWaitMin,
@@ -159,25 +158,18 @@ func (w *wire) Session(sid uuid.UUID) (Session, error) {
 	return sess, nil
 }
 
-func (w *wire) OpenStream(sessionID uuid.UUID, name string) (Stream, error) {
-	if len(w.sessions) == 0 || w.isClosed() {
-		return nil, ErrSessionClosed
-	}
-	sess, found := w.sessions[sessionID]
-	if !found {
-		return nil, ErrSessionNotFound
-	}
-	return sess.OpenStream(name)
-}
-
-func (w *wire) FindStream(name string) (Stream, error) {
-	if len(w.sessions) == 0 || w.isClosed() {
+func (w *wire) Stream(name string) (Stream, error) {
+	w.mu.RLock()
+	if len(w.sessions) == 0 || w.closed {
+		w.mu.RUnlock()
 		return nil, ErrSessionClosed
 	}
 	sess, found := w.streamIndex[name]
 	if !found {
+		w.mu.RUnlock()
 		return nil, ErrStreamNotFound
 	}
+	w.mu.RUnlock()
 	return sess.OpenStream(name)
 }
 
@@ -187,7 +179,7 @@ func (w *wire) Sessions() Sessions {
 	return w.sessions
 }
 
-func (w *wire) Listen() (err error) {
+func (w *wire) Connect() (err error) {
 	switch w.role {
 	case ClientSide:
 		err = w.acceptClient()
@@ -197,7 +189,7 @@ func (w *wire) Listen() (err error) {
 	return err
 }
 
-func (w *wire) MountStream(name string, h Handler) {
+func (w *wire) Mount(name string, h Handler) {
 	w.handlers[name] = h
 }
 
@@ -255,9 +247,7 @@ func (w *wire) acceptClient() (err error) {
 		w.waitCh = make(chan struct{})
 
 		go w.shutdown(wrapConn)
-		if w.onListen != nil {
-			w.onListen(w)
-		}
+		go w.onConnect(w)
 
 		openSession(sid, wrapConn, w, remoteStreamNames)
 
@@ -292,23 +282,19 @@ func (w *wire) acceptServer() (err error) {
 	defer listener.Close()
 
 	go w.shutdown(listener)
-	if w.onListen != nil {
-		w.onListen(w)
-	}
+	go w.onConnect(w)
 
-	var closed bool
 	for {
-		closed = w.isClosed()
 		conn, acceptErr := listener.Accept()
 		if acceptErr != nil {
-			if !closed {
+			if !w.isClosed() {
 				err = acceptErr
 			}
 			break
 		}
 
 		// close all new connections
-		if closed {
+		if w.isClosed() {
 			_ = conn.Close()
 			continue
 		}
@@ -336,35 +322,17 @@ func (w *wire) shutdown(conn io.Closer) {
 		return
 	}
 
-	//sessLen := w.sessHub.Len()
-	//workerNum := sessLen
-	//if sessLen > 1 {
-	//	workerNum /= 2
-	//}
-
-	//var (
-	//	queueCh = make(chan *session, workerNum)
-	//	doneCh  = make(chan error, sessLen)
-	//	closeCh = make(chan interface{})
-	//)
-	//
-	//for i := 0; i < workerNum; i++ {
-	//	go w.shutdownSession(queueCh, doneCh, closeCh)
-	//}
-	//for _, sess := range w.sessHub.List() {
-	//	queueCh <- sess
-	//}
-	//
 	shutdownErr := NewShutdownError()
-	//for ei := 0; ei < sessLen; ei++ {
-	//	err := <-doneCh
-	//	if err != nil {
-	//		shutdownErr.Errors = append(shutdownErr.Errors, err)
-	//	}
-	//}
 
-	//close(closeCh)
-	//
+	w.mu.RLock()
+	for _, sess := range w.sessions {
+		err := sess.Close()
+		if err != nil && err != ErrSessionClosed {
+			shutdownErr.Add(err)
+		}
+	}
+	w.mu.RUnlock()
+
 	if err := conn.Close(); err != nil {
 		shutdownErr.Add(err)
 	}
@@ -386,23 +354,28 @@ func (w *wire) sessionManagement() {
 				return
 			}
 
+			w.mu.Lock()
 			w.sessions[sess.ID()] = sess
 			for _, streamName := range sess.StreamNames() {
 				w.streamIndex[streamName] = sess
 			}
+			w.mu.Unlock()
 
-			w.openSessHook(sess.ID())
+			go w.openSessHook(sess)
 
 		case sess, ok := <-w.unregisterSess:
 			if !ok {
 				return
 			}
+
+			w.mu.Lock()
 			for _, streamName := range sess.StreamNames() {
 				delete(w.streamIndex, streamName)
 			}
-
-			w.closeSessHook(sess.ID())
 			delete(w.sessions, sess.ID())
+			w.mu.Unlock()
+
+			go w.closeSessHook(sess)
 		}
 	}
 }
@@ -453,24 +426,6 @@ func (w *wire) confirmSession(conn *yamux.Session, tv TokenValidator) (sid uuid.
 		localStreamNames(w.handlers),
 	)
 }
-
-//func (w *wire) shutdownSession(q chan *session, e chan error, c chan interface{}) {
-//	for {
-//		select {
-//		case sess, ok := <-q:
-//			if !ok {
-//				return
-//			}
-//			err := sess.Close()
-//			if errors.Is(err, ErrSessionClosed) {
-//				err = nil
-//			}
-//			e <- err
-//		case <-c:
-//			return
-//		}
-//	}
-//}
 
 func validateRole(r Role) error {
 	switch r {

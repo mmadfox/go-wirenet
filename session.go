@@ -1,7 +1,11 @@
 package wirenet
 
 import (
+	"context"
 	"io"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/yamux"
@@ -12,44 +16,98 @@ type Session interface {
 	IsClosed() bool
 	Close() error
 	StreamNames() []string
-	HasStream(name string) bool
 	OpenStream(name string) (Stream, error)
 }
 
 type session struct {
-	id          uuid.UUID
-	conn        *yamux.Session
-	w           *wire
-	streamNames []string
+	id               uuid.UUID
+	conn             *yamux.Session
+	w                *wire
+	streamNames      []string
+	closed           bool
+	closeCh          chan chan error
+	activeStreams    uint32
+	streams          map[uuid.UUID]Stream
+	registerStream   chan Stream
+	unregisterStream chan Stream
+	mu               sync.RWMutex
 }
 
 func openSession(sid uuid.UUID, conn *yamux.Session, w *wire, streamNames []string) {
 	sess := &session{
-		id:          sid,
-		conn:        conn,
-		w:           w,
-		streamNames: streamNames,
+		id:               sid,
+		conn:             conn,
+		w:                w,
+		streamNames:      streamNames,
+		closeCh:          make(chan chan error),
+		streams:          make(map[uuid.UUID]Stream),
+		registerStream:   make(chan Stream),
+		unregisterStream: make(chan Stream),
 	}
-	go sess.run()
+	go sess.open()
 }
 
 func (s *session) StreamNames() []string {
 	return s.streamNames
 }
 
-func (s *session) HasStream(name string) bool {
-	for _, cmd := range s.streamNames {
-		if name == cmd {
-			return true
+func (s *session) shutdown() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		for {
+			select {
+			case stream, ok := <-s.registerStream:
+				if !ok {
+					return
+				}
+
+				s.streams[stream.ID()] = stream
+
+			case stream, ok := <-s.unregisterStream:
+				if !ok {
+					return
+				}
+
+				delete(s.streams, stream.ID())
+
+			case errCh, ok := <-s.closeCh:
+				if !ok {
+					return
+				}
+				timeout := time.Now().Add(time.Minute)
+				for {
+					activeStreams := atomic.LoadUint32(&s.activeStreams)
+					if activeStreams <= 0 {
+						break
+					}
+					if timeout.Unix() <= time.Now().Unix() {
+						s.mu.RLock()
+						for _, stream := range s.streams {
+							stream.Close()
+						}
+						s.mu.RUnlock()
+					}
+					time.Sleep(300 * time.Millisecond)
+				}
+				cancel()
+				errCh <- s.conn.Close()
+				close(errCh)
+				return
+			}
 		}
-	}
-	return false
+	}()
+	return ctx
 }
 
-func (s *session) dispatch(conn *yamux.Stream) {
+func (s *session) dispatchStream(ctx context.Context, conn *yamux.Stream) {
 	defer func() {
+		atomic.CompareAndSwapUint32(&s.activeStreams, s.activeStreams, s.activeStreams-1)
 		_ = conn.Close()
 	}()
+
+	atomic.AddUint32(&s.activeStreams, 1)
+
 	frm, err := recvFrame(conn, func(f frame) error {
 		if s.w.verifyToken == nil {
 			return nil
@@ -65,30 +123,41 @@ func (s *session) dispatch(conn *yamux.Stream) {
 	if !ok {
 		return
 	}
+
 	stream := newStream(s.id, frm.Command(), conn)
+	s.registerStream <- stream
+
 	handler(stream)
 	_ = stream.Close()
+
+	s.unregisterStream <- stream
 }
 
-func (s *session) run() {
+func (s *session) open() {
 	defer func() {
 		s.w.unregisterSess <- s
 	}()
+
+	ctx := s.shutdown()
 
 	s.w.registerSess <- s
 
 	for {
 		conn, err := s.conn.AcceptStream()
 		if err != nil {
-			// s.Close()
+			s.Close()
 			return
 		}
-		// if s.isClosed || s.wire.isClosed {
-		//_ = conn.Close()
-		//continue
-		//}
-		// go s.runCommand(ctx, conn)
-		go s.dispatch(conn)
+
+		s.mu.RLock()
+		closed := s.closed
+		s.mu.RUnlock()
+		if closed || s.w.isClosed() {
+			_ = conn.Close()
+			continue
+		}
+
+		go s.dispatchStream(ctx, conn)
 	}
 }
 
@@ -97,14 +166,34 @@ func (s *session) ID() uuid.UUID {
 }
 
 func (s *session) IsClosed() bool {
-	return false
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.closed
 }
 
 func (s *session) Close() error {
-	return nil
+	s.mu.RLock()
+	if s.closed {
+		s.mu.RUnlock()
+		return ErrSessionClosed
+	}
+	s.mu.RUnlock()
+
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+
+	errCh := make(chan error)
+	s.closeCh <- errCh
+
+	return <-errCh
 }
 
 func (s *session) OpenStream(name string) (Stream, error) {
+	if s.IsClosed() {
+		return nil, ErrSessionClosed
+	}
+
 	conn, err := s.conn.OpenStream()
 	if err != nil {
 		return nil, err
@@ -124,246 +213,3 @@ func (s *session) OpenStream(name string) (Stream, error) {
 
 	return newStream(s.id, name, conn), nil
 }
-
-//
-//const (
-//	waitShutdownInterval = 500 * time.Millisecond
-//)
-//
-//type session struct {
-//	id           uuid.UUID
-//	conn         net.Conn
-//	ts           *yamux.Session
-//	wire         *wire
-//	cmdCounter   int32
-//	closeCh      chan chan error
-//	waitCh       chan interface{}
-//	isClosed     bool
-//	cmdHub       commandHub
-//	closeTimeout time.Duration
-//	openHook     SessionHook
-//	closeHook    SessionHook
-//	mu           sync.RWMutex
-//	hub          sessionHub
-//}
-//
-//func newSession(w *wire, conn net.Conn, sess *yamux.Session) *session {
-//	s := &session{
-//		wire:         w,
-//		conn:         conn,
-//		ts:           sess,
-//		id:           uuid.New(),
-//		closeCh:      make(chan chan error),
-//		waitCh:       make(chan interface{}),
-//		cmdHub:       newCommandHub(),
-//		closeTimeout: w.sessCloseTimeout,
-//		openHook:     w.openSessHook,
-//		closeHook:    w.closeSessHook,
-//		hub:          w.sessHub,
-//	}
-//
-//	s.hub.Register(s)
-//
-//	return s
-//}
-//
-//func (s *session) ID() uuid.UUID {
-//	return s.id
-//}
-//
-//func (s *session) IsClosed() bool {
-//	s.mu.RLock()
-//	defer s.mu.RUnlock()
-//	return s.isClosed
-//}
-//
-//func (s *session) Close() error {
-//	if s.IsClosed() {
-//		return ErrSessionClosed
-//	}
-//
-//	s.mu.Lock()
-//	s.isClosed = true
-//	s.mu.Unlock()
-//
-//	errCh := make(chan error)
-//	s.closeCh <- errCh
-//
-//	s.hub.Unregister(s)
-//
-//	return <-errCh
-//}
-//
-//func (s *session) Command(name string) (Cmd, error) {
-//	stream, err := s.ts.OpenStream()
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	frm, err := sendFrame(
-//		name,
-//		initFrameTyp,
-//		s.wire.token,
-//		stream)
-//	if err != nil {
-//		stream.Close()
-//		return nil, err
-//	}
-//
-//	if frm.Command() != name && !frm.IsRecvFrame() {
-//		stream.Close()
-//		return nil, io.ErrUnexpectedEOF
-//	}
-//
-//	stream.Shrink()
-//
-//	return newCommand(name, stream, s.cmdHub), nil
-//}
-//
-//func (s *session) runCommand(ctx context.Context, stream *yamux.Stream) {
-//	defer func() {
-//		if err := recover(); err != nil {
-//		}
-//		_ = stream.Close()
-//	}()
-//
-//	frm, err := recvFrame(stream, func(f frame) error {
-//		if s.wire.verifyToken == nil {
-//			return nil
-//		}
-//		return s.wire.verifyToken(f.Command(), f.Payload())
-//	})
-//	if err != nil {
-//		return
-//	}
-//
-//	handler, ok := s.wire.handlers[frm.Command()]
-//	if !ok {
-//		return
-//	}
-//
-//	stream.Shrink()
-//
-//	cmd := newCommand(frm.Command(), stream, s.cmdHub)
-//	if err := handler.Handle(cmd); err != nil {
-//		// TODO: write error
-//	}
-//	_ = cmd.Close()
-//}
-//
-//func (s *session) tokenVerification() (err error) {
-//	switch s.wire.role {
-//	case ClientSide:
-//		err = s.tokenVerificationClientSide()
-//		if err != nil {
-//			s.wire.retryMax = -1
-//		}
-//	case ServerSide:
-//		err = s.tokenVerificationServerSide()
-//	}
-//	return err
-//}
-//
-//func (s *session) tokenVerificationClientSide() error {
-//	if s.wire.token == nil {
-//		return nil
-//	}
-//	stream, err := s.ts.OpenStream()
-//	if err != nil {
-//		return err
-//	}
-//	defer stream.Close()
-//
-//	_, sendErr := sendFrame(
-//		tokenVerification,
-//		permFrameTyp,
-//		s.wire.token,
-//		stream)
-//	if sendErr != nil {
-//		err = sendErr
-//	}
-//	return err
-//}
-//
-//func (s *session) tokenVerificationServerSide() error {
-//	if s.wire.verifyToken == nil {
-//		return nil
-//	}
-//
-//	conn, err := s.ts.AcceptStream()
-//	if err != nil {
-//		return err
-//	}
-//	defer conn.Close()
-//
-//	_, err = recvFrame(conn, func(f frame) error {
-//		return s.wire.verifyToken(f.Command(), f.Payload())
-//	})
-//	return err
-//}
-//
-//func (s *session) serve() {
-//	defer func() {
-//		close(s.waitCh)
-//		_ = s.closeHook(s)
-//	}()
-//
-//	ctx := s.shutdown()
-//
-//	if err := s.tokenVerification(); err != nil {
-//		_ = s.Close()
-//		return
-//	}
-//
-//	if err := s.openHook(s); err != nil {
-//		_ = s.Close()
-//		return
-//	}
-//
-//	for {
-//		log.Println("accept")
-//		conn, err := s.ts.AcceptStream()
-//		if err != nil {
-//			_ = s.Close()
-//			return
-//		}
-//		if s.isClosed || s.wire.isClosed {
-//			_ = conn.Close()
-//			continue
-//		}
-//		go s.runCommand(ctx, conn)
-//	}
-//}
-//
-//func (s *session) shutdown() context.Context {
-//	ctx, cancel := context.WithCancel(context.Background())
-//
-//	go func() {
-//		for {
-//			select {
-//			case <-s.waitCh:
-//				return
-//			case errCh, ok := <-s.closeCh:
-//				if !ok {
-//					return
-//				}
-//				timeout := time.Now().Add(s.closeTimeout)
-//				for {
-//					if s.cmdHub.Len() <= 0 {
-//						break
-//					}
-//					if timeout.Unix() <= time.Now().Unix() {
-//						s.cmdHub.Close()
-//						break
-//					}
-//					time.Sleep(waitShutdownInterval)
-//				}
-//				cancel()
-//				errCh <- s.ts.Close()
-//				close(errCh)
-//				return
-//			}
-//		}
-//	}()
-//	return ctx
-//}

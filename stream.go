@@ -10,6 +10,7 @@ import (
 const bufSize = 1 << 8
 
 type Stream interface {
+	ID() uuid.UUID
 	SessionID() uuid.UUID
 	Name() string
 
@@ -21,6 +22,7 @@ type Stream interface {
 }
 
 type stream struct {
+	id     uuid.UUID
 	sid    uuid.UUID
 	name   string
 	conn   *yamux.Stream
@@ -30,11 +32,16 @@ type stream struct {
 
 func newStream(sessID uuid.UUID, name string, conn *yamux.Stream) Stream {
 	return &stream{
+		id:   uuid.New(),
 		sid:  sessID,
 		name: name,
 		conn: conn,
 		buf:  make([]byte, bufSize),
 	}
+}
+
+func (s *stream) ID() uuid.UUID {
+	return s.id
 }
 
 func (s *stream) SessionID() uuid.UUID {

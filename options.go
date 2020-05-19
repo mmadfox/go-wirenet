@@ -21,9 +21,9 @@ const (
 
 type Option func(*wire)
 
-func WithOnConnect(fn func(io.Closer)) Option {
+func WithConnectHook(hook func(io.Closer)) Option {
 	return func(w *wire) {
-		w.onListen = fn
+		w.onConnect = hook
 	}
 }
 

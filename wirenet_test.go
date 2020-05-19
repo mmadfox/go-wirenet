@@ -41,43 +41,16 @@ func TestWire_New(t *testing.T) {
 	assert.Equal(t, ErrAddrEmpty, err)
 }
 
-//func TestWire_Stream(t *testing.T) {
-//	addr := genAddr(t)
-//	listen := make(chan struct{})
-//	var wireSrv Wire
-//	go func() {
-//		sessCh := make(chan uuid.UUID)
-//		srv, err := NewServer(addr,
-//			WithOnConnect(func(_ io.Closer) {
-//				close(listen)
-//			}), WithOpenSessionHook(func(u uuid.UUID) {
-//
-//			}))
-//		assert.Nil(t, err)
-//		go func() {
-//			for {
-//				sid := <-sessCh
-//				sess, err := srv.Session(sid)
-//				assert.Nil(t, err)
-//				ls := sess.Stream("balance-recalc")
-//			}
-//		}()
-//		wireSrv = srv
-//		srv.Listen()
-//	}()
-//	<-listen
-//}
-
 func TestWire_StreamClientToServerSomeData(t *testing.T) {
 	addr := genAddr(t)
 	listen := make(chan struct{})
 	var wireSrv Wire
 	go func() {
-		srv, err := NewServer(addr, WithOnConnect(func(_ io.Closer) {
+		srv, err := NewServer(addr, WithConnectHook(func(_ io.Closer) {
 			close(listen)
 		}))
 		assert.Nil(t, err)
-		srv.MountStream("ls", func(ls Stream) {
+		srv.Mount("ls", func(ls Stream) {
 			buf := make([]byte, 32)
 			for i := uint32(0); i < 100; i++ {
 				binary.LittleEndian.PutUint32(buf, i)
@@ -88,7 +61,7 @@ func TestWire_StreamClientToServerSomeData(t *testing.T) {
 			}
 		})
 		wireSrv = srv
-		srv.Listen()
+		srv.Connect()
 	}()
 	<-listen
 
@@ -97,13 +70,13 @@ func TestWire_StreamClientToServerSomeData(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			init := make(chan struct{})
-			cli, err := NewClient(addr, WithOpenSessionHook(func(u uuid.UUID) {
+			cli, err := NewClient(addr, WithOpenSessionHook(func(s Session) {
 				close(init)
 			}))
 			go func() {
 				<-init
 				defer wg.Done()
-				ls, err := cli.FindStream("ls")
+				ls, err := cli.Stream("ls")
 				assert.Nil(t, err)
 				buf := make([]byte, 32)
 				total := 0
@@ -119,11 +92,10 @@ func TestWire_StreamClientToServerSomeData(t *testing.T) {
 				assert.Nil(t, cli.Close())
 			}()
 			assert.Nil(t, err)
-			assert.Nil(t, cli.Listen())
+			assert.Nil(t, cli.Connect())
 		}()
 	}
 	wg.Wait()
-
 	assert.Nil(t, wireSrv.Close())
 }
 
@@ -139,10 +111,10 @@ func TestWire_StreamServerToClient(t *testing.T) {
 	go func() {
 		sessions := make(chan uuid.UUID)
 		srv, err := NewServer(addr,
-			WithOpenSessionHook(func(u uuid.UUID) {
-				sessions <- u
+			WithOpenSessionHook(func(s Session) {
+				sessions <- s.ID()
 			}),
-			WithOnConnect(func(closer io.Closer) {
+			WithConnectHook(func(closer io.Closer) {
 				close(listen)
 			}))
 		assert.Nil(t, err)
@@ -155,7 +127,7 @@ func TestWire_StreamServerToClient(t *testing.T) {
 				}
 			}
 			for c := 0; c < sessCount; c++ {
-				st, err := srv.FindStream(fmt.Sprintf("host%d:cat", c))
+				st, err := srv.Stream(fmt.Sprintf("host%d:cat", c))
 				assert.Nil(t, err)
 				payload := fmt.Sprintf("string%d", c)
 				n, err := st.Write([]byte(payload))
@@ -163,7 +135,7 @@ func TestWire_StreamServerToClient(t *testing.T) {
 				assert.Equal(t, len(payload), n)
 			}
 		}()
-		assert.Nil(t, srv.Listen())
+		assert.Nil(t, srv.Connect())
 	}()
 	<-listen
 
@@ -173,7 +145,7 @@ func TestWire_StreamServerToClient(t *testing.T) {
 		go func(n int) {
 			cli, err := NewClient(addr)
 			assert.Nil(t, err)
-			cli.MountStream(fmt.Sprintf("host%d:cat", n), func(s Stream) {
+			cli.Mount(fmt.Sprintf("host%d:cat", n), func(s Stream) {
 				str := make([]byte, 7)
 				n, err := s.Read(str)
 				assert.Nil(t, err)
@@ -182,7 +154,7 @@ func TestWire_StreamServerToClient(t *testing.T) {
 				counter <- n
 				wg.Done()
 			})
-			assert.Nil(t, cli.Listen())
+			assert.Nil(t, cli.Connect())
 		}(i)
 	}
 	wg.Wait()
@@ -202,27 +174,27 @@ func TestWire_StreamClientToServerJSON(t *testing.T) {
 		Age  int
 	}
 	go func() {
-		srv, err := NewServer(addr, WithOnConnect(func(_ io.Closer) {
+		srv, err := NewServer(addr, WithConnectHook(func(_ io.Closer) {
 			close(listen)
 		}))
 		assert.Nil(t, err)
-		srv.MountStream("ls", func(ls Stream) {
+		srv.Mount("ls", func(ls Stream) {
 			// doing...
 			err := json.NewEncoder(ls).Encode(want{Name: "name", Age: 888})
 			assert.Nil(t, err)
 		})
 		wireSrv = srv
-		srv.Listen()
+		srv.Connect()
 	}()
 	<-listen
 
 	init := make(chan struct{})
-	cli, err := NewClient(addr, WithOpenSessionHook(func(u uuid.UUID) {
+	cli, err := NewClient(addr, WithOpenSessionHook(func(s Session) {
 		close(init)
 	}))
 	go func() {
 		<-init
-		ls, err := cli.FindStream("ls")
+		ls, err := cli.Stream("ls")
 		assert.Nil(t, err)
 		var res want
 		err = json.NewDecoder(ls).Decode(&res)
@@ -232,7 +204,7 @@ func TestWire_StreamClientToServerJSON(t *testing.T) {
 		assert.Nil(t, cli.Close())
 	}()
 	assert.Nil(t, err)
-	assert.Nil(t, cli.Listen())
+	assert.Nil(t, cli.Connect())
 	assert.Nil(t, wireSrv.Close())
 }
 
@@ -242,27 +214,27 @@ func TestWire_StreamClientToServer(t *testing.T) {
 	var wireSrv Wire
 	want := []byte("wirenet")
 	go func() {
-		srv, err := NewServer(addr, WithOnConnect(func(_ io.Closer) {
+		srv, err := NewServer(addr, WithConnectHook(func(_ io.Closer) {
 			close(listen)
 		}))
 		assert.Nil(t, err)
-		srv.MountStream("ls", func(ls Stream) {
+		srv.Mount("ls", func(ls Stream) {
 			n, err := ls.ReadFrom(bytes.NewReader(want))
 			assert.Nil(t, err)
 			assert.Equal(t, int64(len(want)), n)
 		})
 		wireSrv = srv
-		srv.Listen()
+		srv.Connect()
 	}()
 	<-listen
 
 	init := make(chan struct{})
-	cli, err := NewClient(addr, WithOpenSessionHook(func(u uuid.UUID) {
+	cli, err := NewClient(addr, WithOpenSessionHook(func(s Session) {
 		close(init)
 	}))
 	go func() {
 		<-init
-		ls, err := cli.FindStream("ls")
+		ls, err := cli.Stream("ls")
 		assert.Nil(t, err)
 		buf := bytes.NewBuffer(nil)
 		n, err := ls.WriteTo(buf)
@@ -271,7 +243,7 @@ func TestWire_StreamClientToServer(t *testing.T) {
 		assert.Nil(t, cli.Close())
 	}()
 	assert.Nil(t, err)
-	assert.Nil(t, cli.Listen())
+	assert.Nil(t, cli.Connect())
 	assert.Nil(t, wireSrv.Close())
 }
 
@@ -287,16 +259,16 @@ func TestWire_OpenCloseSession(t *testing.T) {
 	// server
 	go func() {
 		srv, err := NewServer(addr,
-			WithOnConnect(func(_ io.Closer) { close(listen) }),
-			WithOpenSessionHook(func(sid uuid.UUID) {
+			WithConnectHook(func(_ io.Closer) { close(listen) }),
+			WithOpenSessionHook(func(s Session) {
 				atomic.AddInt32(&openSessCounter, 1)
 			}),
-			WithCloseSessionHook(func(sid uuid.UUID) {
+			WithCloseSessionHook(func(s Session) {
 				atomic.AddInt32(&closeSessCounter, 1)
 			}))
 		assert.Nil(t, err)
 		wireSrv = srv
-		srv.Listen()
+		srv.Connect()
 	}()
 	<-listen
 	// client
@@ -305,7 +277,7 @@ func TestWire_OpenCloseSession(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			open := make(chan struct{})
-			wireCli, err := NewClient(addr, WithOpenSessionHook(func(u uuid.UUID) {
+			wireCli, err := NewClient(addr, WithOpenSessionHook(func(s Session) {
 				close(open)
 			}))
 			go func() {
@@ -316,7 +288,7 @@ func TestWire_OpenCloseSession(t *testing.T) {
 				wg.Done()
 			}()
 			assert.Nil(t, err)
-			assert.Nil(t, wireCli.Listen())
+			assert.Nil(t, wireCli.Connect())
 		}()
 	}
 	wg.Wait()
@@ -327,11 +299,11 @@ func TestWire_OpenCloseSession(t *testing.T) {
 
 func TestWire_ListenServer(t *testing.T) {
 	addr := genAddr(t)
-	wire, err := NewServer(addr, WithOnConnect(func(w io.Closer) {
+	wire, err := NewServer(addr, WithConnectHook(func(w io.Closer) {
 		assert.Nil(t, w.Close())
 	}))
 	assert.Nil(t, err)
-	assert.Nil(t, wire.Listen())
+	assert.Nil(t, wire.Connect())
 }
 
 func TestWire_ListenClient(t *testing.T) {
@@ -340,19 +312,22 @@ func TestWire_ListenClient(t *testing.T) {
 	listen := make(chan struct{})
 	// server
 	go func() {
-		srv, err := NewServer(addr, WithOnConnect(func(_ io.Closer) { close(listen) }))
+		srv, err := NewServer(addr,
+			WithConnectHook(func(_ io.Closer) {
+				close(listen)
+			}))
 		assert.Nil(t, err)
 		wireSrv = srv
-		wireSrv.Listen()
+		wireSrv.Connect()
 	}()
 	<-listen
 	// client
-	wireCli, err := NewClient(addr, WithOnConnect(func(w io.Closer) {
+	wireCli, err := NewClient(addr, WithConnectHook(func(w io.Closer) {
 		assert.Nil(t, w.Close())
 		assert.Equal(t, ErrWireClosed, w.Close())
 	}))
 	assert.Nil(t, err)
-	assert.Nil(t, wireCli.Listen())
+	assert.Nil(t, wireCli.Connect())
 	assert.Nil(t, wireSrv.Close())
 	assert.Equal(t, ErrWireClosed, wireSrv.Close())
 }
@@ -360,13 +335,14 @@ func TestWire_ListenClient(t *testing.T) {
 func BenchmarkWire_ListenServer(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		addr := ":4578"
-		wire, err := NewServer(addr, WithOnConnect(func(w io.Closer) {
-			_ = w.Close()
-		}))
+		wire, err := NewServer(addr,
+			WithConnectHook(func(w io.Closer) {
+				_ = w.Close()
+			}))
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := wire.Listen(); err != nil {
+		if err := wire.Connect(); err != nil {
 			b.Fatal(err)
 		}
 	}
