@@ -139,11 +139,11 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 	return wire, nil
 }
 
-func NewServer(addr string, opts ...Option) (Wire, error) {
+func Server(addr string, opts ...Option) (Wire, error) {
 	return New(addr, ServerSide, opts...)
 }
 
-func NewClient(addr string, opts ...Option) (Wire, error) {
+func Client(addr string, opts ...Option) (Wire, error) {
 	return New(addr, ClientSide, opts...)
 }
 

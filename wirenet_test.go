@@ -46,7 +46,7 @@ func TestWire_StreamClientToServerSomeData(t *testing.T) {
 	listen := make(chan struct{})
 	var wireSrv Wire
 	go func() {
-		srv, err := NewServer(addr, WithConnectHook(func(_ io.Closer) {
+		srv, err := Server(addr, WithConnectHook(func(_ io.Closer) {
 			close(listen)
 		}))
 		assert.Nil(t, err)
@@ -70,7 +70,7 @@ func TestWire_StreamClientToServerSomeData(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			init := make(chan struct{})
-			cli, err := NewClient(addr, WithOpenSessionHook(func(s Session) {
+			cli, err := Client(addr, WithOpenSessionHook(func(s Session) {
 				close(init)
 			}))
 			go func() {
@@ -110,7 +110,7 @@ func TestWire_StreamServerToClient(t *testing.T) {
 	// server side
 	go func() {
 		sessions := make(chan uuid.UUID)
-		srv, err := NewServer(addr,
+		srv, err := Server(addr,
 			WithOpenSessionHook(func(s Session) {
 				sessions <- s.ID()
 			}),
@@ -143,7 +143,7 @@ func TestWire_StreamServerToClient(t *testing.T) {
 	for i := 0; i < workerNum; i++ {
 		wg.Add(1)
 		go func(n int) {
-			cli, err := NewClient(addr)
+			cli, err := Client(addr)
 			assert.Nil(t, err)
 			cli.Mount(fmt.Sprintf("host%d:cat", n), func(s Stream) {
 				str := make([]byte, 7)
@@ -174,7 +174,7 @@ func TestWire_StreamClientToServerJSON(t *testing.T) {
 		Age  int
 	}
 	go func() {
-		srv, err := NewServer(addr, WithConnectHook(func(_ io.Closer) {
+		srv, err := Server(addr, WithConnectHook(func(_ io.Closer) {
 			close(listen)
 		}))
 		assert.Nil(t, err)
@@ -189,7 +189,7 @@ func TestWire_StreamClientToServerJSON(t *testing.T) {
 	<-listen
 
 	init := make(chan struct{})
-	cli, err := NewClient(addr, WithOpenSessionHook(func(s Session) {
+	cli, err := Client(addr, WithOpenSessionHook(func(s Session) {
 		close(init)
 	}))
 	go func() {
@@ -214,7 +214,7 @@ func TestWire_StreamClientToServer(t *testing.T) {
 	var wireSrv Wire
 	want := []byte("wirenet")
 	go func() {
-		srv, err := NewServer(addr, WithConnectHook(func(_ io.Closer) {
+		srv, err := Server(addr, WithConnectHook(func(_ io.Closer) {
 			close(listen)
 		}))
 		assert.Nil(t, err)
@@ -229,7 +229,7 @@ func TestWire_StreamClientToServer(t *testing.T) {
 	<-listen
 
 	init := make(chan struct{})
-	cli, err := NewClient(addr, WithOpenSessionHook(func(s Session) {
+	cli, err := Client(addr, WithOpenSessionHook(func(s Session) {
 		close(init)
 	}))
 	go func() {
@@ -258,7 +258,7 @@ func TestWire_OpenCloseSession(t *testing.T) {
 
 	// server
 	go func() {
-		srv, err := NewServer(addr,
+		srv, err := Server(addr,
 			WithConnectHook(func(_ io.Closer) { close(listen) }),
 			WithOpenSessionHook(func(s Session) {
 				atomic.AddInt32(&openSessCounter, 1)
@@ -277,7 +277,7 @@ func TestWire_OpenCloseSession(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			open := make(chan struct{})
-			wireCli, err := NewClient(addr, WithOpenSessionHook(func(s Session) {
+			wireCli, err := Client(addr, WithOpenSessionHook(func(s Session) {
 				close(open)
 			}))
 			go func() {
@@ -299,7 +299,7 @@ func TestWire_OpenCloseSession(t *testing.T) {
 
 func TestWire_ListenServer(t *testing.T) {
 	addr := genAddr(t)
-	wire, err := NewServer(addr, WithConnectHook(func(w io.Closer) {
+	wire, err := Server(addr, WithConnectHook(func(w io.Closer) {
 		assert.Nil(t, w.Close())
 	}))
 	assert.Nil(t, err)
@@ -312,7 +312,7 @@ func TestWire_ListenClient(t *testing.T) {
 	listen := make(chan struct{})
 	// server
 	go func() {
-		srv, err := NewServer(addr,
+		srv, err := Server(addr,
 			WithConnectHook(func(_ io.Closer) {
 				close(listen)
 			}))
@@ -322,7 +322,7 @@ func TestWire_ListenClient(t *testing.T) {
 	}()
 	<-listen
 	// client
-	wireCli, err := NewClient(addr, WithConnectHook(func(w io.Closer) {
+	wireCli, err := Client(addr, WithConnectHook(func(w io.Closer) {
 		assert.Nil(t, w.Close())
 		assert.Equal(t, ErrWireClosed, w.Close())
 	}))
@@ -335,7 +335,7 @@ func TestWire_ListenClient(t *testing.T) {
 func BenchmarkWire_ListenServer(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		addr := ":4578"
-		wire, err := NewServer(addr,
+		wire, err := Server(addr,
 			WithConnectHook(func(w io.Closer) {
 				_ = w.Close()
 			}))

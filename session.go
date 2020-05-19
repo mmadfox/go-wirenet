@@ -121,6 +121,7 @@ func (s *session) dispatchStream(ctx context.Context, conn *yamux.Stream) {
 
 	handler, ok := s.w.handlers[frm.Command()]
 	if !ok {
+		// TODO: pipe between two client sessions
 		return
 	}
 
