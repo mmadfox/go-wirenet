@@ -2,12 +2,16 @@ package wirenet
 
 import (
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"os"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/golang/protobuf/proto"
+
+	"github.com/mediabuyerbot/go-wirenet/pb"
 
 	"github.com/google/uuid"
 
@@ -34,10 +38,11 @@ func (s Role) String() (side string) {
 }
 
 type (
-	SessionHook func(uuid.UUID)
-	RetryPolicy func(min, max time.Duration, attemptNum int) time.Duration
-	Handler     func(Stream)
-	Sessions    map[uuid.UUID]Session
+	SessionHook    func(uuid.UUID)
+	RetryPolicy    func(min, max time.Duration, attemptNum int) time.Duration
+	Handler        func(Stream)
+	Sessions       map[uuid.UUID]Session
+	TokenValidator func(streamName string, token []byte) error
 )
 
 type Wire interface {
@@ -50,7 +55,7 @@ type Wire interface {
 	Listen() error
 }
 
-const cmdSep = ";"
+const cmdSep = "+"
 
 type wire struct {
 	addr string
@@ -77,9 +82,11 @@ type wire struct {
 	registerSess   chan Session
 	unregisterSess chan Session
 	sessions       Sessions
+	clientSess     Session
+	streamIndex    map[string]Session
 
 	token       []byte
-	verifyToken func(string, []byte) error
+	verifyToken TokenValidator
 
 	tlsConfig *tls.Config
 
@@ -103,6 +110,7 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		sessCloseTimeout: DefaultSessionCloseTimeout,
 
 		sessions:       make(Sessions),
+		streamIndex:    make(map[string]Session),
 		registerSess:   make(chan Session, 1),
 		unregisterSess: make(chan Session, 1),
 
@@ -168,6 +176,8 @@ func (w *wire) FindStream(name string) (Stream, error) {
 	if len(w.sessions) == 0 || w.isClosed() {
 		return nil, ErrSessionClosed
 	}
+
+	// TODO: add index map[streamName]Session
 
 	var sess Session
 	isClientSide := w.role == ClientSide
@@ -267,8 +277,9 @@ func (w *wire) acceptClient() (err error) {
 			break
 		}
 
-		if authErr := w.sendInitFrames(wrapConn); authErr != nil {
-			err = authErr
+		sid, remoteStreamNames, sErr := w.openSession(wrapConn)
+		if sErr != nil {
+			err = sErr
 			break
 		}
 
@@ -279,7 +290,7 @@ func (w *wire) acceptClient() (err error) {
 			w.onListen(w)
 		}
 
-		openSession(wrapConn, w, nil)
+		openSession(sid, wrapConn, w, remoteStreamNames)
 
 		<-w.waitCh
 	}
@@ -330,13 +341,13 @@ func (w *wire) acceptServer() (err error) {
 			break
 		}
 
-		commandNames, authErr := w.recvInitFrames(wrapConn)
-		if authErr != nil {
-			_ = conn.Close()
+		sid, localStreamNames, sErr := w.confirmSession(wrapConn, w.verifyToken)
+		if sErr != nil {
+			conn.Close()
 			continue
 		}
 
-		openSession(wrapConn, w, commandNames)
+		openSession(sid, wrapConn, w, localStreamNames)
 	}
 	return err
 }
@@ -398,73 +409,72 @@ func (w *wire) sessionManagement() {
 			}
 
 			w.sessions[sess.ID()] = sess
+			for _, streamName := range sess.StreamNames() {
+				w.streamIndex[streamName] = sess
+			}
+
 			w.openSessHook(sess.ID())
 
 		case sess, ok := <-w.unregisterSess:
 			if !ok {
 				return
 			}
+			for _, streamName := range sess.StreamNames() {
+				delete(w.streamIndex, streamName)
+			}
 
 			w.closeSessHook(sess.ID())
+
 			delete(w.sessions, sess.ID())
 		}
 	}
 }
 
-func (w *wire) sendInitFrames(conn *yamux.Session) error {
+func (w *wire) openSession(conn *yamux.Session) (sid uuid.UUID, rsn []string, err error) {
 	stream, err := conn.OpenStream()
 	if err != nil {
-		return err
+		return sid, rsn, err
 	}
 	defer stream.Close()
 
-	auth, err := sendFrame(authorization, permFrameTyp, w.token, stream)
-	if err != nil {
-		return err
-	}
-	if auth.Command() != authorization && !auth.IsRecvFrame() {
-		return io.ErrUnexpectedEOF
+	if err := stream.SetDeadline(deadline(w)); err != nil {
+		return sid, rsn, err
 	}
 
-	stream.Shrink()
-	commandNames := make([]string, 0, len(w.handlers))
-	for name, _ := range w.handlers {
-		commandNames = append(commandNames, name)
-	}
-	payload := []byte(strings.Join(commandNames, cmdSep))
-	cmd, err := sendFrame(commands, initFrameTyp, payload, stream)
+	sid = uuid.New()
+	sessID, err := sid.MarshalBinary()
 	if err != nil {
-		return err
+		return sid, rsn, err
 	}
-	if cmd.Command() != commands && !auth.IsRecvFrame() {
-		return io.ErrUnexpectedEOF
+
+	remoteStreamNames, err := openSessionRequest(
+		stream,
+		sessID,
+		w.token,
+		localStreamNames(w.handlers))
+	if err != nil {
+		return sid, nil, err
 	}
-	return nil
+
+	return sid, remoteStreamNames, nil
 }
 
-func (w *wire) recvInitFrames(conn *yamux.Session) ([]string, error) {
+func (w *wire) confirmSession(conn *yamux.Session, tv TokenValidator) (sid uuid.UUID, lsn []string, err error) {
 	stream, err := conn.AcceptStream()
 	if err != nil {
-		return nil, err
+		return sid, nil, err
 	}
 	defer stream.Close()
 
-	if _, err := recvFrame(stream, func(f frame) error {
-		if w.verifyToken == nil {
-			return nil
-		}
-		return w.verifyToken(f.Command(), f.Payload())
-	}); err != nil {
-		return nil, err
+	if err := stream.SetDeadline(deadline(w)); err != nil {
+		return sid, lsn, err
 	}
 
-	stream.Shrink()
-
-	cmd, err := recvFrame(stream, nil)
-	if err != nil {
-		return nil, err
-	}
-	return strings.Split(string(cmd.Payload()), cmdSep), nil
+	return confirmSessionRequest(
+		stream,
+		w.verifyToken,
+		localStreamNames(w.handlers),
+	)
 }
 
 //func (w *wire) shutdownSession(q chan *session, e chan error, c chan interface{}) {
@@ -492,4 +502,72 @@ func validateRole(r Role) error {
 	default:
 		return ErrUnknownListenerSide
 	}
+}
+
+func localStreamNames(m map[string]Handler) (names []string) {
+	names = make([]string, 0, len(m))
+	for n, _ := range m {
+		names = append(names, n)
+	}
+	return
+}
+
+func deadline(w *wire) time.Time {
+	return time.Now().Add(w.transportConf.ConnectionWriteTimeout)
+}
+
+func confirmSessionRequest(conn *yamux.Stream, fn TokenValidator, localStreamNames []string) (sid uuid.UUID, remoteStreamNames []string, err error) {
+	frm, err := newDecoder(conn).Decode()
+	if err != nil {
+		return sid, nil, err
+	}
+	var req pb.OpenSessionRequest
+	if err := proto.Unmarshal(frm.Payload(), &req); err != nil {
+		return sid, nil, err
+	}
+
+	resp := &pb.OpenSessionResponse{
+		Sid:               req.Sid,
+		RemoteStreamNames: localStreamNames,
+	}
+	if fn != nil {
+		if err := fn("confirmSession", req.Token); err != nil {
+			resp.Err = err.Error()
+		}
+	}
+	p, err := proto.Marshal(resp)
+	if err != nil {
+		return sid, nil, err
+	}
+	if err := newEncoder(conn).Encode(confSessType, "confirmSession", p); err != nil {
+		return sid, nil, err
+	}
+	sid, err = uuid.FromBytes(req.Sid)
+	return sid, req.LocalStreamNames, err
+}
+
+func openSessionRequest(conn *yamux.Stream, sessID []byte, token []byte, localStreamNames []string) ([]string, error) {
+	payload, err := proto.Marshal(&pb.OpenSessionRequest{
+		Sid:              sessID,
+		Token:            token,
+		LocalStreamNames: localStreamNames,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := newEncoder(conn).Encode(openSessTyp, "openSession", payload); err != nil {
+		return nil, err
+	}
+	frm, err := newDecoder(conn).Decode()
+	if err != nil {
+		return nil, err
+	}
+	var resp pb.OpenSessionResponse
+	if err := proto.Unmarshal(frm.Payload(), &resp); err != nil {
+		return nil, err
+	}
+	if len(resp.Err) > 0 {
+		return nil, errors.New(resp.Err)
+	}
+	return resp.RemoteStreamNames, nil
 }

@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package pb;
+
+message OpenSessionRequest {
+   bytes sid = 1;
+   bytes token = 2;
+   repeated string local_stream_names = 3;
+}
+
+message OpenSessionResponse {
+   bytes sid = 1;
+   repeated string remote_stream_names = 2;
+   string err = 3;
+}

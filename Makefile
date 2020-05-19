@@ -7,4 +7,6 @@ covertest: deps
 	go tool cover -html=coverage.out
 
 mocks:
-	mockgen -package=wirenet -destination=hub_mock.go -source=hub.go
+
+proto:
+	@protoc --go_out=. ./pb/session.proto

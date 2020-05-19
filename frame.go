@@ -10,8 +10,11 @@ import (
 const (
 	initFrameTyp uint32 = 0x2
 	errFrameTyp  uint32 = 0x4
-	recvFrameTyp uint32 = 0x6
-	permFrameTyp uint32 = 0x8
+	recvFrameTyp uint32 = 0x8
+	permFrameTyp uint32 = 0x16
+
+	openSessTyp  uint32 = 0x32
+	confSessType uint32 = 0x64
 
 	hdrLen       = 4
 	headerLength = hdrLen * 3
@@ -171,7 +174,7 @@ func sendFrame(name string, typ uint32, data []byte, rw io.ReadWriter) (frame, e
 	return frm, nil
 }
 
-func recvFrame(rw io.ReadWriter, check func(frame) error) (frm frame, err error) {
+func recvFrame(rw io.ReadWriter, fn func(frame) error) (frm frame, err error) {
 	frm, err = newDecoder(rw).Decode()
 	if err != nil {
 		return nil, err
@@ -180,8 +183,8 @@ func recvFrame(rw io.ReadWriter, check func(frame) error) (frm frame, err error)
 	frameTyp := recvFrameTyp
 	var frameErr []byte
 
-	if check != nil {
-		if checkErr := check(frm); checkErr != nil {
+	if fn != nil {
+		if checkErr := fn(frm); checkErr != nil {
 			frameTyp = permFrameTyp
 			frameErr = []byte(checkErr.Error())
 			err = checkErr

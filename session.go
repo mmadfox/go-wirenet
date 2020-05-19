@@ -11,30 +11,34 @@ type Session interface {
 	ID() uuid.UUID
 	IsClosed() bool
 	Close() error
+	StreamNames() []string
 	HasStream(name string) bool
 	OpenStream(name string) (Stream, error)
 }
 
 type session struct {
-	id       uuid.UUID
-	conn     *yamux.Session
-	w        *wire
-	commands []string
+	id          uuid.UUID
+	conn        *yamux.Session
+	w           *wire
+	streamNames []string
 }
 
-func openSession(conn *yamux.Session, w *wire, commandNames []string) {
+func openSession(sid uuid.UUID, conn *yamux.Session, w *wire, streamNames []string) {
 	sess := &session{
-		id:       uuid.New(),
-		conn:     conn,
-		w:        w,
-		commands: commandNames,
+		id:          sid,
+		conn:        conn,
+		w:           w,
+		streamNames: streamNames,
 	}
-
 	go sess.run()
 }
 
+func (s *session) StreamNames() []string {
+	return s.streamNames
+}
+
 func (s *session) HasStream(name string) bool {
-	for _, cmd := range s.commands {
+	for _, cmd := range s.streamNames {
 		if name == cmd {
 			return true
 		}
@@ -43,6 +47,9 @@ func (s *session) HasStream(name string) bool {
 }
 
 func (s *session) dispatch(conn *yamux.Stream) {
+	defer func() {
+		_ = conn.Close()
+	}()
 	frm, err := recvFrame(conn, func(f frame) error {
 		if s.w.verifyToken == nil {
 			return nil
@@ -50,20 +57,17 @@ func (s *session) dispatch(conn *yamux.Stream) {
 		return s.w.verifyToken(f.Command(), f.Payload())
 	})
 	if err != nil {
-		conn.Close()
 		return
 	}
 	conn.Shrink()
 
 	handler, ok := s.w.handlers[frm.Command()]
 	if !ok {
-		conn.Close()
 		return
 	}
 	stream := newStream(s.id, frm.Command(), conn)
 	handler(stream)
-
-	stream.Close()
+	_ = stream.Close()
 }
 
 func (s *session) run() {
