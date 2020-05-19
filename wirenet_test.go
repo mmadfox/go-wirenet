@@ -103,6 +103,11 @@ func TestWire_StreamClientToServerSomeData(t *testing.T) {
 func TestWire_StreamServerToClient(t *testing.T) {
 	addr := genAddr(t)
 	listen := make(chan struct{})
+	workerNum := 5
+	want := 5 * 7
+	var have int
+	counter := make(chan int, workerNum)
+
 	// server side
 	go func() {
 		sessions := make(chan uuid.UUID)
@@ -116,7 +121,7 @@ func TestWire_StreamServerToClient(t *testing.T) {
 		assert.Nil(t, err)
 		go func() {
 			var sessCount int
-			for sessCount < 5 {
+			for sessCount < workerNum {
 				select {
 				case <-sessions:
 					sessCount++
@@ -136,7 +141,7 @@ func TestWire_StreamServerToClient(t *testing.T) {
 	<-listen
 
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
+	for i := 0; i < workerNum; i++ {
 		wg.Add(1)
 		go func(n int) {
 			cli, err := NewClient(addr)
@@ -147,12 +152,18 @@ func TestWire_StreamServerToClient(t *testing.T) {
 				assert.Nil(t, err)
 				assert.NotEmpty(t, n)
 				assert.Contains(t, string(str), "string")
+				counter <- n
 				wg.Done()
 			})
 			assert.Nil(t, cli.Listen())
 		}(i)
 	}
 	wg.Wait()
+
+	for i := 0; i < workerNum; i++ {
+		have += <-counter
+	}
+	assert.Equal(t, want, have)
 }
 
 func TestWire_StreamClientToServerJSON(t *testing.T) {
@@ -238,7 +249,6 @@ func TestWire_StreamClientToServer(t *testing.T) {
 }
 
 func TestWire_OpenCloseSession(t *testing.T) {
-	t.Skip()
 	addr := genAddr(t)
 	var wireSrv Wire
 	listen := make(chan struct{})
@@ -259,7 +269,7 @@ func TestWire_OpenCloseSession(t *testing.T) {
 			}))
 		assert.Nil(t, err)
 		wireSrv = srv
-		_ = srv.Listen()
+		srv.Listen()
 	}()
 	<-listen
 	// client
@@ -267,7 +277,6 @@ func TestWire_OpenCloseSession(t *testing.T) {
 	for i := int32(0); i < maxSess; i++ {
 		wg.Add(1)
 		go func() {
-			defer wg.Done()
 			open := make(chan struct{})
 			wireCli, err := NewClient(addr, WithOpenSessionHook(func(u uuid.UUID) {
 				close(open)
@@ -276,6 +285,8 @@ func TestWire_OpenCloseSession(t *testing.T) {
 				<-open
 				<-time.After(time.Second)
 				assert.Nil(t, wireCli.Close())
+				time.Sleep(500 * time.Millisecond)
+				wg.Done()
 			}()
 			assert.Nil(t, err)
 			assert.Nil(t, wireCli.Listen())
@@ -305,7 +316,7 @@ func TestWire_ListenClient(t *testing.T) {
 		srv, err := NewServer(addr, WithOnConnect(func(_ io.Closer) { close(listen) }))
 		assert.Nil(t, err)
 		wireSrv = srv
-		assert.Nil(t, wireSrv.Listen())
+		wireSrv.Listen()
 	}()
 	<-listen
 	// client
