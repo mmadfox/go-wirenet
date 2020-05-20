@@ -88,7 +88,7 @@ func WithReadWriteTimeouts(read, write time.Duration) Option {
 	}
 }
 
-func WithCloseSessionTimeout(dur time.Duration) Option {
+func WithSessionCloseTimeout(dur time.Duration) Option {
 	return func(w *wire) {
 		w.sessCloseTimeout = dur
 	}

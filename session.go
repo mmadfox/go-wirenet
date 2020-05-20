@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,34 +20,34 @@ type Session interface {
 }
 
 type session struct {
-	id               uuid.UUID
-	conn             *yamux.Session
-	w                *wire
-	streamNames      []string
-	closed           bool
-	closeCh          chan chan error
-	activeStreams    uint32
-	streams          map[uuid.UUID]Stream
-	registerStream   chan Stream
-	unregisterStream chan Stream
-	mu               sync.RWMutex
+	id            uuid.UUID
+	conn          *yamux.Session
+	w             *wire
+	streamNames   []string
+	closed        bool
+	closeCh       chan chan error
+	activeStreams int
+	streams       map[uuid.UUID]Stream
+	mu            sync.RWMutex
+	timeoutDur    time.Duration
 }
 
 func openSession(sid uuid.UUID, conn *yamux.Session, w *wire, streamNames []string) {
 	sess := &session{
-		id:               sid,
-		conn:             conn,
-		w:                w,
-		streamNames:      streamNames,
-		closeCh:          make(chan chan error),
-		streams:          make(map[uuid.UUID]Stream),
-		registerStream:   make(chan Stream),
-		unregisterStream: make(chan Stream),
+		id:          sid,
+		conn:        conn,
+		w:           w,
+		streamNames: streamNames,
+		closeCh:     make(chan chan error),
+		streams:     make(map[uuid.UUID]Stream),
+		timeoutDur:  w.sessCloseTimeout,
 	}
 	go sess.open()
 }
 
 func (s *session) StreamNames() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.streamNames
 }
 
@@ -56,50 +55,58 @@ func (s *session) String() string {
 	return fmt.Sprintf("wirenet session: %s", s.id)
 }
 
+func (s *session) registerStream(stream Stream) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.streams[stream.ID()] = stream
+	s.activeStreams++
+}
+
+func (s *session) unregisterStream(stream Stream) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.streams, stream.ID())
+	if s.activeStreams > 0 {
+		s.activeStreams--
+	}
+}
+
+func (s *session) activeStreamCounter() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.activeStreams
+}
+
 func (s *session) shutdown() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
 		for {
-			select {
-			case stream, ok := <-s.registerStream:
-				if !ok {
-					return
-				}
-
-				s.streams[stream.ID()] = stream
-
-			case stream, ok := <-s.unregisterStream:
-				if !ok {
-					return
-				}
-
-				delete(s.streams, stream.ID())
-
-			case errCh, ok := <-s.closeCh:
-				if !ok {
-					return
-				}
-				timeout := time.Now().Add(time.Minute)
-				for {
-					activeStreams := atomic.LoadUint32(&s.activeStreams)
-					if activeStreams <= 0 {
-						break
-					}
-					if timeout.Unix() <= time.Now().Unix() {
-						s.mu.RLock()
-						for _, stream := range s.streams {
-							stream.Close()
-						}
-						s.mu.RUnlock()
-					}
-					time.Sleep(300 * time.Millisecond)
-				}
-				cancel()
-				errCh <- s.conn.Close()
-				close(errCh)
+			errCh, ok := <-s.closeCh
+			if !ok {
 				return
 			}
+
+			timeout := time.Now().Add(s.timeoutDur)
+			for {
+				if s.activeStreamCounter() <= 0 {
+					break
+				}
+
+				if timeout.Unix() <= time.Now().Unix() {
+					for _, stream := range s.streams {
+						stream.Close()
+					}
+					continue
+				}
+				time.Sleep(time.Second)
+			}
+
+			cancel()
+			errCh <- s.conn.Close()
+			close(errCh)
+
+			break
 		}
 	}()
 	return ctx
@@ -107,60 +114,50 @@ func (s *session) shutdown() context.Context {
 
 func (s *session) dispatchStream(ctx context.Context, conn *yamux.Stream) {
 	defer func() {
-		atomic.CompareAndSwapUint32(&s.activeStreams, s.activeStreams, s.activeStreams-1)
 		_ = conn.Close()
 	}()
 
-	atomic.AddUint32(&s.activeStreams, 1)
-
-	frm, err := recvFrame(conn, func(f frame) error {
+	var frm frame
+	var err error
+	if frm, err = recvFrame(conn, func(f frame) error {
 		if s.w.verifyToken == nil {
 			return nil
 		}
 		return s.w.verifyToken(f.Command(), f.Payload())
-	})
-	if err != nil {
+	}); err != nil {
 		return
 	}
-	conn.Shrink()
 
+	conn.Shrink()
 	handler, ok := s.w.handlers[frm.Command()]
 	if !ok {
-		// TODO: pipe between two client sessions
 		return
 	}
 
-	stream := newStream(s.id, frm.Command(), conn)
-	s.registerStream <- stream
+	stream := openStream(s, frm.Command(), conn)
+	handler(ctx, stream)
 
-	handler(stream)
-	_ = stream.Close()
-
-	s.unregisterStream <- stream
+	if !stream.IsClosed() {
+		_ = stream.Close()
+	}
 }
 
 func (s *session) open() {
 	defer func() {
-		s.w.unregisterSess <- s
+		_ = s.Close()
 	}()
 
 	ctx := s.shutdown()
-
-	s.w.registerSess <- s
+	s.w.registerSession(s)
+	go s.w.openSessHook(s)
 
 	for {
 		conn, err := s.conn.AcceptStream()
 		if err != nil {
-			if err != io.EOF {
-				s.Close()
-			}
 			return
 		}
 
-		s.mu.RLock()
-		closed := s.closed
-		s.mu.RUnlock()
-		if closed || s.w.isClosed() {
+		if s.IsClosed() || s.w.isClosed() {
 			_ = conn.Close()
 			continue
 		}
@@ -170,6 +167,8 @@ func (s *session) open() {
 }
 
 func (s *session) ID() uuid.UUID {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.id
 }
 
@@ -180,12 +179,9 @@ func (s *session) IsClosed() bool {
 }
 
 func (s *session) Close() error {
-	s.mu.RLock()
-	if s.closed {
-		s.mu.RUnlock()
+	if s.IsClosed() {
 		return ErrSessionClosed
 	}
-	s.mu.RUnlock()
 
 	s.mu.Lock()
 	s.closed = true
@@ -193,6 +189,9 @@ func (s *session) Close() error {
 
 	errCh := make(chan error)
 	s.closeCh <- errCh
+
+	s.w.closeSessHook(s)
+	s.w.unregisterSession(s)
 
 	return <-errCh
 }
@@ -218,6 +217,7 @@ func (s *session) OpenStream(name string) (Stream, error) {
 	}
 
 	conn.Shrink()
+	stream := openStream(s, name, conn)
 
-	return newStream(s.id, name, conn), nil
+	return stream, nil
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -25,7 +26,8 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	wire.Mount("amount", func(stream wirenet.Stream) {
+
+	wire.Mount("amount", func(_ context.Context, stream wirenet.Stream) {
 		json.NewEncoder(stream).Encode("amount")
 	})
 	go func() {

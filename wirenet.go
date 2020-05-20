@@ -1,6 +1,7 @@
 package wirenet
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"io"
@@ -40,7 +41,7 @@ func (s Role) String() (side string) {
 type (
 	SessionHook    func(Session)
 	RetryPolicy    func(min, max time.Duration, attemptNum int) time.Duration
-	Handler        func(Stream)
+	Handler        func(context.Context, Stream)
 	Sessions       map[uuid.UUID]Session
 	TokenValidator func(streamName string, token []byte) error
 )
@@ -76,10 +77,8 @@ type wire struct {
 	retryMax     int
 	retryPolicy  RetryPolicy
 
-	registerSess   chan Session
-	unregisterSess chan Session
-	sessions       Sessions
-	streamIndex    map[string]Session
+	sessions    Sessions
+	streamIndex map[string]Session
 
 	token       []byte
 	verifyToken TokenValidator
@@ -105,10 +104,8 @@ func newWire(addr string, role Role, opts ...Option) (Wire, error) {
 		writeTimeout:     DefaultWriteTimeout,
 		sessCloseTimeout: DefaultSessionCloseTimeout,
 
-		sessions:       make(Sessions),
-		streamIndex:    make(map[string]Session),
-		registerSess:   make(chan Session, 1),
-		unregisterSess: make(chan Session, 1),
+		sessions:    make(Sessions),
+		streamIndex: make(map[string]Session),
 
 		role:          role,
 		openSessHook:  func(Session) {},
@@ -133,9 +130,6 @@ func newWire(addr string, role Role, opts ...Option) (Wire, error) {
 	for _, opt := range opts {
 		opt(wire)
 	}
-
-	go wire.sessionManagement()
-
 	return wire, nil
 }
 
@@ -326,13 +320,19 @@ func (w *wire) shutdown(conn io.Closer) {
 	shutdownErr := NewShutdownError()
 
 	w.mu.RLock()
+	sessions := make([]Session, 0, len(w.sessions))
 	for _, sess := range w.sessions {
-		err := sess.Close()
+		sessions = append(sessions, sess)
+	}
+	w.mu.RUnlock()
+
+	var err error
+	for _, sess := range sessions {
+		err = sess.Close()
 		if err != nil && err != ErrSessionClosed {
 			shutdownErr.Add(err)
 		}
 	}
-	w.mu.RUnlock()
 
 	if err := conn.Close(); err != nil {
 		shutdownErr.Add(err)
@@ -345,44 +345,35 @@ func (w *wire) shutdown(conn io.Closer) {
 	errCh <- shutdownErr
 }
 
-func (w *wire) sessionManagement() {
-	for {
-		select {
-		case sess, ok := <-w.registerSess:
-			if !ok {
-				return
-			}
+func (w *wire) hasSession(s Session) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	_, found := w.sessions[s.ID()]
+	return found
+}
 
-			w.mu.Lock()
-			w.sessions[sess.ID()] = sess
-			for _, streamName := range sess.StreamNames() {
-				w.streamIndex[streamName] = sess
-			}
-			w.mu.Unlock()
+func (w *wire) registerSession(s Session) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.sessions[s.ID()] = s
+	for _, streamName := range s.StreamNames() {
+		w.streamIndex[streamName] = s
+	}
+}
 
-			go w.openSessHook(sess)
+func (w *wire) unregisterSession(s Session) {
+	var sl int
+	w.mu.Lock()
+	for _, streamName := range s.StreamNames() {
+		delete(w.streamIndex, streamName)
+	}
+	delete(w.sessions, s.ID())
+	sl = len(w.sessions)
+	w.mu.Unlock()
 
-		case sess, ok := <-w.unregisterSess:
-			if !ok {
-				return
-			}
-
-			var sl int
-			w.mu.Lock()
-			for _, streamName := range sess.StreamNames() {
-				delete(w.streamIndex, streamName)
-			}
-			delete(w.sessions, sess.ID())
-			sl = len(w.sessions)
-			w.mu.Unlock()
-
-			go w.closeSessHook(sess)
-
-			forcedCloseClient := w.role == ClientSide && sl == 0 && !w.isClosed()
-			if forcedCloseClient {
-				_ = w.Close()
-			}
-		}
+	forcedCloseClient := w.role == ClientSide && sl == 0 && !w.isClosed()
+	if forcedCloseClient {
+		_ = w.Close()
 	}
 }
 

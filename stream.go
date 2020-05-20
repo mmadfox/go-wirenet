@@ -11,8 +11,9 @@ const bufSize = 1 << 8
 
 type Stream interface {
 	ID() uuid.UUID
-	SessionID() uuid.UUID
+	Session() Session
 	Name() string
+	IsClosed() bool
 
 	io.Closer
 	io.ReaderFrom
@@ -23,29 +24,37 @@ type Stream interface {
 
 type stream struct {
 	id     uuid.UUID
-	sid    uuid.UUID
+	sess   *session
 	name   string
 	conn   *yamux.Stream
 	closed bool
 	buf    []byte
 }
 
-func newStream(sessID uuid.UUID, name string, conn *yamux.Stream) Stream {
-	return &stream{
+func openStream(sess *session, name string, conn *yamux.Stream) Stream {
+	stream := &stream{
 		id:   uuid.New(),
-		sid:  sessID,
+		sess: sess,
 		name: name,
 		conn: conn,
 		buf:  make([]byte, bufSize),
 	}
+
+	sess.registerStream(stream)
+
+	return stream
+}
+
+func (s *stream) IsClosed() bool {
+	return s.closed
 }
 
 func (s *stream) ID() uuid.UUID {
 	return s.id
 }
 
-func (s *stream) SessionID() uuid.UUID {
-	return s.sid
+func (s *stream) Session() Session {
+	return s.sess
 }
 
 func (s *stream) Name() string {
@@ -134,6 +143,9 @@ func (s *stream) Close() error {
 	if s.closed {
 		return ErrClosedCommand
 	}
+
 	s.closed = true
+	s.sess.unregisterStream(s)
+
 	return s.conn.Close()
 }

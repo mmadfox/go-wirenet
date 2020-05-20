@@ -2,6 +2,7 @@ package wirenet
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -30,10 +31,67 @@ func genAddr(t *testing.T) string {
 	return fmt.Sprintf(":%d", port)
 }
 
+type balance struct {
+	Amount int
+	OpName string
+}
+
+func server(addr string, t *testing.T) (closer chan io.Closer) {
+	closer = make(chan io.Closer)
+	go func() {
+		srv, err := Server(addr,
+			WithConnectHook(func(c io.Closer) {
+				closer <- c
+				close(closer)
+			}))
+		assert.Nil(t, err)
+		srv.Mount("server:readBalance", func(ctx context.Context, stream Stream) {
+			err := json.NewEncoder(stream).Encode(balance{
+				Amount: 100,
+				OpName: "debit",
+			})
+			assert.Nil(t, err)
+		})
+		err = srv.Connect()
+		assert.Nil(t, err)
+		assert.Empty(t, srv.Sessions())
+	}()
+	return closer
+}
+
+func client(addr string, wg *sync.WaitGroup, t *testing.T) {
+	go func() {
+		cli, err := Client(addr, WithOpenSessionHook(func(s Session) {
+			stream, err := s.OpenStream("server:readBalance")
+			assert.Nil(t, err)
+			defer stream.Close()
+			var b balance
+			assert.Nil(t, json.NewDecoder(stream).Decode(&b))
+			assert.Equal(t, 100, b.Amount)
+			wg.Done()
+		}))
+		assert.Nil(t, err)
+		assert.Nil(t, cli.Connect())
+	}()
+}
+
 func TestWire_New(t *testing.T) {
 	wire, err := Server("")
 	assert.Nil(t, wire)
 	assert.Equal(t, ErrAddrEmpty, err)
+}
+
+func TestWire_Close(t *testing.T) {
+	addr := genAddr(t)
+	maxSess := 30
+	srv := <-server(addr, t)
+	var wg sync.WaitGroup
+	for i := 0; i < maxSess; i++ {
+		wg.Add(1)
+		client(addr, &wg, t)
+	}
+	wg.Wait()
+	srv.Close()
 }
 
 func TestWire_StreamClientToServerSomeData(t *testing.T) {
@@ -45,7 +103,7 @@ func TestWire_StreamClientToServerSomeData(t *testing.T) {
 			close(listen)
 		}))
 		assert.Nil(t, err)
-		srv.Mount("ls", func(ls Stream) {
+		srv.Mount("ls", func(ctx context.Context, ls Stream) {
 			buf := make([]byte, 32)
 			for i := uint32(0); i < 100; i++ {
 				binary.LittleEndian.PutUint32(buf, i)
@@ -65,9 +123,12 @@ func TestWire_StreamClientToServerSomeData(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			init := make(chan struct{})
-			cli, err := Client(addr, WithOpenSessionHook(func(s Session) {
-				close(init)
-			}))
+			cli, err := Client(addr,
+				WithOpenSessionHook(func(s Session) {
+					close(init)
+				}),
+				WithSessionCloseTimeout(time.Second),
+			)
 			go func() {
 				<-init
 				defer wg.Done()
@@ -140,7 +201,7 @@ func TestWire_StreamServerToClient(t *testing.T) {
 		go func(n int) {
 			cli, err := Client(addr)
 			assert.Nil(t, err)
-			cli.Mount(fmt.Sprintf("host%d:cat", n), func(s Stream) {
+			cli.Mount(fmt.Sprintf("host%d:cat", n), func(ctx context.Context, s Stream) {
 				str := make([]byte, 7)
 				n, err := s.Read(str)
 				assert.Nil(t, err)
@@ -173,7 +234,7 @@ func TestWire_StreamClientToServerJSON(t *testing.T) {
 			close(listen)
 		}))
 		assert.Nil(t, err)
-		srv.Mount("ls", func(ls Stream) {
+		srv.Mount("ls", func(ctx context.Context, ls Stream) {
 			// doing...
 			err := json.NewEncoder(ls).Encode(want{Name: "name", Age: 888})
 			assert.Nil(t, err)
@@ -184,9 +245,11 @@ func TestWire_StreamClientToServerJSON(t *testing.T) {
 	<-listen
 
 	init := make(chan struct{})
-	cli, err := Client(addr, WithOpenSessionHook(func(s Session) {
-		close(init)
-	}))
+	cli, err := Client(addr,
+		WithOpenSessionHook(func(s Session) {
+			close(init)
+		}),
+		WithSessionCloseTimeout(time.Second))
 	go func() {
 		<-init
 		ls, err := cli.Stream("ls")
@@ -213,7 +276,7 @@ func TestWire_StreamClientToServer(t *testing.T) {
 			close(listen)
 		}))
 		assert.Nil(t, err)
-		srv.Mount("ls", func(ls Stream) {
+		srv.Mount("ls", func(ctx context.Context, ls Stream) {
 			n, err := ls.ReadFrom(bytes.NewReader(want))
 			assert.Nil(t, err)
 			assert.Equal(t, int64(len(want)), n)
@@ -224,9 +287,11 @@ func TestWire_StreamClientToServer(t *testing.T) {
 	<-listen
 
 	init := make(chan struct{})
-	cli, err := Client(addr, WithOpenSessionHook(func(s Session) {
-		close(init)
-	}))
+	cli, err := Client(addr,
+		WithOpenSessionHook(func(s Session) {
+			close(init)
+		}),
+		WithSessionCloseTimeout(time.Second))
 	go func() {
 		<-init
 		ls, err := cli.Stream("ls")
@@ -317,10 +382,11 @@ func TestWire_ListenClient(t *testing.T) {
 	}()
 	<-listen
 	// client
-	wireCli, err := Client(addr, WithConnectHook(func(w io.Closer) {
-		assert.Nil(t, w.Close())
-		assert.Equal(t, ErrWireClosed, w.Close())
-	}))
+	wireCli, err := Client(addr,
+		WithConnectHook(func(w io.Closer) {
+			assert.Nil(t, w.Close())
+			assert.Equal(t, ErrWireClosed, w.Close())
+		}))
 	assert.Nil(t, err)
 	assert.Nil(t, wireCli.Connect())
 	assert.Nil(t, wireSrv.Close())

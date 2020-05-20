@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,24 +17,29 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	wire.Mount("ping", func(stream wirenet.Stream) {
-		fmt.Printf("retrieve from server: %s \n", amountFromServer(wire))
+
+	wire.Mount("ping", func(_ context.Context, stream wirenet.Stream) {
+		fromServer := amountFromServer(stream.Session())
+		fmt.Printf("retrieve from server: %s \n", fromServer)
+
 		if err := ping(stream); err != nil {
 			log.Println("ping error", err)
 		}
 	})
-	wire.Mount("hostA:envPath", func(stream wirenet.Stream) {
+
+	wire.Mount("hostA:envPath", func(_ context.Context, stream wirenet.Stream) {
 		if err := envPath(stream); err != nil {
 			log.Println("envPath error", err)
 		}
 	})
+
 	if err := wire.Connect(); err != nil {
 		panic(err)
 	}
 }
 
-func amountFromServer(w wirenet.Wire) (str string) {
-	amount, err := w.Stream("amount")
+func amountFromServer(sess wirenet.Session) (str string) {
+	amount, err := sess.OpenStream("amount")
 	if err != nil {
 		log.Println("amount from server error", err)
 		return ""
@@ -44,7 +50,7 @@ func amountFromServer(w wirenet.Wire) (str string) {
 }
 
 func ping(w io.Writer) error {
-	cmd := exec.Command("ping", "google.com", "-c", "10")
+	cmd := exec.Command("ping", "google.com", "-c", "50")
 	cmd.Stdout = w
 	return cmd.Run()
 }
