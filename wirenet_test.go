@@ -31,12 +31,7 @@ func genAddr(t *testing.T) string {
 }
 
 func TestWire_New(t *testing.T) {
-	addr := genAddr(t)
-	wire, err := New(addr, Role(999))
-	assert.Nil(t, wire)
-	assert.Equal(t, ErrUnknownListenerSide, err)
-
-	wire, err = New("", ServerSide)
+	wire, err := Server("")
 	assert.Nil(t, wire)
 	assert.Equal(t, ErrAddrEmpty, err)
 }

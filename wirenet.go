@@ -68,7 +68,7 @@ type wire struct {
 	transportConf *yamux.Config
 
 	closed  bool
-	closeCh chan chan error
+	closeCh chan chan *ShutdownError
 	waitCh  chan struct{}
 
 	retryWaitMin time.Duration
@@ -90,7 +90,7 @@ type wire struct {
 	mu       sync.RWMutex
 }
 
-func New(addr string, role Role, opts ...Option) (Wire, error) {
+func newWire(addr string, role Role, opts ...Option) (Wire, error) {
 	if err := validateRole(role); err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 		role:          role,
 		openSessHook:  func(Session) {},
 		closeSessHook: func(Session) {},
-		closeCh:       make(chan chan error),
+		closeCh:       make(chan chan *ShutdownError),
 		onConnect:     func(_ io.Closer) {},
 
 		retryMax:     DefaultRetryMax,
@@ -140,17 +140,16 @@ func New(addr string, role Role, opts ...Option) (Wire, error) {
 }
 
 func Server(addr string, opts ...Option) (Wire, error) {
-	return New(addr, ServerSide, opts...)
+	return newWire(addr, ServerSide, opts...)
 }
 
 func Client(addr string, opts ...Option) (Wire, error) {
-	return New(addr, ClientSide, opts...)
+	return newWire(addr, ClientSide, opts...)
 }
 
 func (w *wire) Session(sid uuid.UUID) (Session, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-
 	sess, found := w.sessions[sid]
 	if !found {
 		return nil, ErrSessionNotFound
@@ -208,10 +207,12 @@ func (w *wire) Close() (err error) {
 	w.closed = true
 	w.mu.Unlock()
 
-	errCh := make(chan error)
+	errCh := make(chan *ShutdownError)
 	w.closeCh <- errCh
-	err = <-errCh
-
+	shutErr := <-errCh
+	if shutErr.IsFilled() {
+		err = shutErr
+	}
 	return err
 }
 
@@ -336,13 +337,11 @@ func (w *wire) shutdown(conn io.Closer) {
 	if err := conn.Close(); err != nil {
 		shutdownErr.Add(err)
 	}
-	if !shutdownErr.IsFilled() {
-		shutdownErr = nil
-	}
 
 	if w.role == ClientSide {
 		close(w.waitCh)
 	}
+
 	errCh <- shutdownErr
 }
 
@@ -368,14 +367,21 @@ func (w *wire) sessionManagement() {
 				return
 			}
 
+			var sl int
 			w.mu.Lock()
 			for _, streamName := range sess.StreamNames() {
 				delete(w.streamIndex, streamName)
 			}
 			delete(w.sessions, sess.ID())
+			sl = len(w.sessions)
 			w.mu.Unlock()
 
 			go w.closeSessHook(sess)
+
+			forcedCloseClient := w.role == ClientSide && sl == 0 && !w.isClosed()
+			if forcedCloseClient {
+				_ = w.Close()
+			}
 		}
 	}
 }

@@ -2,6 +2,7 @@ package wirenet
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -49,6 +50,10 @@ func openSession(sid uuid.UUID, conn *yamux.Session, w *wire, streamNames []stri
 
 func (s *session) StreamNames() []string {
 	return s.streamNames
+}
+
+func (s *session) String() string {
+	return fmt.Sprintf("wirenet session: %s", s.id)
 }
 
 func (s *session) shutdown() context.Context {
@@ -146,7 +151,9 @@ func (s *session) open() {
 	for {
 		conn, err := s.conn.AcceptStream()
 		if err != nil {
-			s.Close()
+			if err != io.EOF {
+				s.Close()
+			}
 			return
 		}
 
