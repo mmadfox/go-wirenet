@@ -17,32 +17,41 @@ type Session interface {
 	Close() error
 	StreamNames() []string
 	OpenStream(name string) (Stream, error)
+	Identification() Identification
 }
 
 type session struct {
-	id            uuid.UUID
-	conn          *yamux.Session
-	w             *wire
-	streamNames   []string
-	closed        bool
-	closeCh       chan chan error
-	activeStreams int
-	streams       map[uuid.UUID]Stream
-	mu            sync.RWMutex
-	timeoutDur    time.Duration
+	id             uuid.UUID
+	conn           *yamux.Session
+	w              *wire
+	streamNames    []string
+	closed         bool
+	closeCh        chan chan error
+	activeStreams  int
+	streams        map[uuid.UUID]Stream
+	mu             sync.RWMutex
+	timeoutDur     time.Duration
+	identification Identification
 }
 
-func openSession(sid uuid.UUID, conn *yamux.Session, w *wire, streamNames []string) {
+func openSession(sid uuid.UUID, id Identification, conn *yamux.Session, w *wire, streamNames []string) {
 	sess := &session{
-		id:          sid,
-		conn:        conn,
-		w:           w,
-		streamNames: streamNames,
-		closeCh:     make(chan chan error),
-		streams:     make(map[uuid.UUID]Stream),
-		timeoutDur:  w.sessCloseTimeout,
+		id:             sid,
+		conn:           conn,
+		w:              w,
+		streamNames:    streamNames,
+		closeCh:        make(chan chan error),
+		streams:        make(map[uuid.UUID]Stream),
+		timeoutDur:     w.sessCloseTimeout,
+		identification: id,
 	}
 	go sess.open()
+}
+
+func (s *session) Identification() Identification {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.identification
 }
 
 func (s *session) StreamNames() []string {
@@ -123,7 +132,7 @@ func (s *session) dispatchStream(ctx context.Context, conn *yamux.Stream) {
 		if s.w.verifyToken == nil {
 			return nil
 		}
-		return s.w.verifyToken(f.Command(), f.Payload())
+		return s.w.verifyToken(f.Command(), s.identification, f.Payload())
 	}); err != nil {
 		return
 	}

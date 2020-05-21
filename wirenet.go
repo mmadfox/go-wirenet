@@ -43,7 +43,7 @@ type (
 	RetryPolicy    func(min, max time.Duration, attemptNum int) time.Duration
 	Handler        func(context.Context, Stream)
 	Sessions       map[uuid.UUID]Session
-	TokenValidator func(streamName string, token []byte) error
+	TokenValidator func(streamName string, id Identification, token Token) error
 )
 
 type Wire interface {
@@ -80,8 +80,9 @@ type wire struct {
 	sessions    Sessions
 	streamIndex map[string]Session
 
-	token       []byte
-	verifyToken TokenValidator
+	token          Token
+	verifyToken    TokenValidator
+	identification Identification
 
 	tlsConfig *tls.Config
 
@@ -229,14 +230,14 @@ func (w *wire) acceptClient() (err error) {
 
 		wrapConn, serveErr := yamux.Client(conn, w.transportConf)
 		if serveErr != nil {
-			err = serveErr
-			break
+			conn.Close()
+			return serveErr
 		}
 
 		sid, remoteStreamNames, sErr := w.openSession(wrapConn)
 		if sErr != nil {
-			err = sErr
-			break
+			wrapConn.Close()
+			return sErr
 		}
 
 		w.waitCh = make(chan struct{})
@@ -244,7 +245,7 @@ func (w *wire) acceptClient() (err error) {
 		go w.shutdown(wrapConn)
 		go w.onConnect(w)
 
-		openSession(sid, wrapConn, w, remoteStreamNames)
+		openSession(sid, w.identification, wrapConn, w, remoteStreamNames)
 
 		<-w.waitCh
 	}
@@ -300,13 +301,13 @@ func (w *wire) acceptServer() (err error) {
 			break
 		}
 
-		sid, localStreamNames, sErr := w.confirmSession(wrapConn, w.verifyToken)
+		sid, id, localStreamNames, sErr := w.confirmSession(wrapConn, w.verifyToken)
 		if sErr != nil {
 			conn.Close()
 			continue
 		}
 
-		openSession(sid, wrapConn, w, localStreamNames)
+		openSession(sid, id, wrapConn, w, localStreamNames)
 	}
 	return err
 }
@@ -398,6 +399,7 @@ func (w *wire) openSession(conn *yamux.Session) (sid uuid.UUID, rsn []string, er
 		stream,
 		sessID,
 		w.token,
+		w.identification,
 		localStreamNames(w.handlers))
 	if err != nil {
 		return sid, nil, err
@@ -406,15 +408,15 @@ func (w *wire) openSession(conn *yamux.Session) (sid uuid.UUID, rsn []string, er
 	return sid, remoteStreamNames, nil
 }
 
-func (w *wire) confirmSession(conn *yamux.Session, tv TokenValidator) (sid uuid.UUID, lsn []string, err error) {
+func (w *wire) confirmSession(conn *yamux.Session, tv TokenValidator) (sid uuid.UUID, id Identification, lsn []string, err error) {
 	stream, err := conn.AcceptStream()
 	if err != nil {
-		return sid, nil, err
+		return sid, nil, nil, err
 	}
 	defer stream.Close()
 
 	if err := stream.SetDeadline(deadline(w)); err != nil {
-		return sid, lsn, err
+		return sid, nil, lsn, err
 	}
 
 	return confirmSessionRequest(
@@ -445,14 +447,14 @@ func deadline(w *wire) time.Time {
 	return time.Now().Add(w.transportConf.ConnectionWriteTimeout)
 }
 
-func confirmSessionRequest(conn *yamux.Stream, fn TokenValidator, localStreamNames []string) (sid uuid.UUID, remoteStreamNames []string, err error) {
+func confirmSessionRequest(conn *yamux.Stream, fn TokenValidator, localStreamNames []string) (sid uuid.UUID, id Identification, lsn []string, err error) {
 	frm, err := newDecoder(conn).Decode()
 	if err != nil {
-		return sid, nil, err
+		return sid, nil, nil, err
 	}
 	var req pb.OpenSessionRequest
 	if err := proto.Unmarshal(frm.Payload(), &req); err != nil {
-		return sid, nil, err
+		return sid, nil, nil, err
 	}
 
 	resp := &pb.OpenSessionResponse{
@@ -460,26 +462,27 @@ func confirmSessionRequest(conn *yamux.Stream, fn TokenValidator, localStreamNam
 		RemoteStreamNames: localStreamNames,
 	}
 	if fn != nil {
-		if err := fn("confirmSession", req.Token); err != nil {
+		if err := fn("confirmSession", req.Identification, req.Token); err != nil {
 			resp.Err = err.Error()
 		}
 	}
 	p, err := proto.Marshal(resp)
 	if err != nil {
-		return sid, nil, err
+		return sid, nil, nil, err
 	}
 	if err := newEncoder(conn).Encode(confSessType, "confirmSession", p); err != nil {
-		return sid, nil, err
+		return sid, nil, nil, err
 	}
 	sid, err = uuid.FromBytes(req.Sid)
-	return sid, req.LocalStreamNames, err
+	return sid, req.Identification, req.LocalStreamNames, err
 }
 
-func openSessionRequest(conn *yamux.Stream, sessID []byte, token []byte, localStreamNames []string) ([]string, error) {
+func openSessionRequest(conn *yamux.Stream, sessID []byte, token Token, id Identification, localStreamNames []string) ([]string, error) {
 	payload, err := proto.Marshal(&pb.OpenSessionRequest{
 		Sid:              sessID,
 		Token:            token,
 		LocalStreamNames: localStreamNames,
+		Identification:   id,
 	})
 	if err != nil {
 		return nil, err

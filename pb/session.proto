@@ -5,7 +5,8 @@ package pb;
 message OpenSessionRequest {
    bytes sid = 1;
    bytes token = 2;
-   repeated string local_stream_names = 3;
+   bytes identification = 3;
+   repeated string local_stream_names = 4;
 }
 
 message OpenSessionResponse {

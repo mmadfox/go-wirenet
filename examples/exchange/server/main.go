@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/mediabuyerbot/go-wirenet"
 )
@@ -20,6 +24,7 @@ func main() {
 
 	sesss := make(chan wirenet.Session, 1)
 	wire, err := wirenet.Server(addr,
+		wirenet.WithSessionCloseTimeout(5*time.Second),
 		wirenet.WithOpenSessionHook(func(session wirenet.Session) {
 			sesss <- session
 		}))
@@ -30,9 +35,16 @@ func main() {
 	go aggregate(sesss)
 	fmt.Println("Sample aggregate server")
 
-	if err := wire.Connect(); err != nil {
-		fmt.Printf("[ERROR] wire connect error %w\n", err)
-	}
+	go func() {
+		if err := wire.Connect(); err != nil {
+			fmt.Printf("[ERROR] wire connect error %v\n", err)
+		}
+	}()
+
+	<-terminate()
+
+	fmt.Println("shutdown")
+	wire.Close()
 }
 
 func aggregate(sessions chan wirenet.Session) {
@@ -66,4 +78,15 @@ func read(streamName string, session wirenet.Session) {
 	if err := session.Close(); err != nil {
 		log.Println("close session error", err)
 	}
+}
+
+func terminate() chan struct{} {
+	done := make(chan struct{})
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		done <- struct{}{}
+	}()
+	return done
 }

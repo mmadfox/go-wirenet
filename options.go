@@ -21,6 +21,9 @@ const (
 
 type Option func(*wire)
 
+type Identification []byte
+type Token []byte
+
 func WithConnectHook(hook func(io.Closer)) Option {
 	return func(w *wire) {
 		w.onConnect = hook
@@ -36,6 +39,19 @@ func WithOpenSessionHook(hook SessionHook) Option {
 func WithCloseSessionHook(hook SessionHook) Option {
 	return func(w *wire) {
 		w.closeSessHook = hook
+	}
+}
+
+func WithIdentification(id Identification, token Token) Option {
+	return func(w *wire) {
+		w.identification = id
+		w.token = token
+	}
+}
+
+func WithTokenValidator(v TokenValidator) Option {
+	return func(w *wire) {
+		w.verifyToken = v
 	}
 }
 
