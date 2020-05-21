@@ -19,10 +19,11 @@ const (
 	DefaultRetryWaitMin        = 1 * time.Second
 )
 
-type Option func(*wire)
-
-type Identification []byte
-type Token []byte
+type (
+	Option         func(*wire)
+	Identification []byte
+	Token          []byte
+)
 
 func WithConnectHook(hook func(io.Closer)) Option {
 	return func(w *wire) {

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"os"
 	"sync"
@@ -220,6 +221,7 @@ func (w *wire) acceptClient() (err error) {
 
 		conn, err := w.dial()
 		if err != nil {
+			log.Println("dial error", err)
 			retryWait := w.retryPolicy(
 				w.retryWaitMin,
 				w.retryWaitMax,
@@ -431,7 +433,7 @@ func validateRole(r Role) error {
 	case ClientSide, ServerSide:
 		return nil
 	default:
-		return ErrUnknownListenerSide
+		return ErrUnknownRole
 	}
 }
 

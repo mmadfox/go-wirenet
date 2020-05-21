@@ -18,9 +18,6 @@ const (
 
 	hdrLen       = 4
 	headerLength = hdrLen * 3
-
-	authorization = "authorization"
-	commands      = "commands"
 )
 
 type frame []byte

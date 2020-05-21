@@ -7,7 +7,7 @@ import (
 	"github.com/hashicorp/yamux"
 )
 
-const bufSize = 1 << 8
+const bufSize = 1 << 9
 
 type Stream interface {
 	ID() uuid.UUID
@@ -39,9 +39,7 @@ func openStream(sess *session, name string, conn *yamux.Stream) Stream {
 		conn: conn,
 		buf:  make([]byte, bufSize),
 	}
-
 	sess.registerStream(stream)
-
 	return stream
 }
 

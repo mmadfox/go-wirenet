@@ -158,8 +158,8 @@ func TestWire_StreamClientToServerSomeData(t *testing.T) {
 func TestWire_StreamServerToClient(t *testing.T) {
 	addr := genAddr(t)
 	listen := make(chan struct{})
-	workerNum := 5
-	want := 5 * 7
+	workerNum := 100
+	want := workerNum * 7
 	var have int
 	counter := make(chan int, workerNum)
 
@@ -314,7 +314,7 @@ func TestWire_OpenCloseSession(t *testing.T) {
 
 	var openSessCounter int32
 	var closeSessCounter int32
-	maxSess := int32(5)
+	maxSess := int32(100)
 
 	// server
 	go func() {
@@ -391,20 +391,4 @@ func TestWire_ListenClient(t *testing.T) {
 	assert.Nil(t, wireCli.Connect())
 	assert.Nil(t, wireSrv.Close())
 	assert.Equal(t, ErrWireClosed, wireSrv.Close())
-}
-
-func BenchmarkWire_ListenServer(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		addr := ":4578"
-		wire, err := Server(addr,
-			WithConnectHook(func(w io.Closer) {
-				_ = w.Close()
-			}))
-		if err != nil {
-			b.Fatal(err)
-		}
-		if err := wire.Connect(); err != nil {
-			b.Fatal(err)
-		}
-	}
 }
