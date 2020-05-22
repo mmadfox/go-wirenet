@@ -20,25 +20,6 @@ import (
 	"github.com/hashicorp/yamux"
 )
 
-const (
-	ClientSide Role = 1
-	ServerSide Role = 2
-)
-
-type Role int
-
-func (s Role) String() (side string) {
-	switch s {
-	case ClientSide:
-		side = "client side"
-	case ServerSide:
-		side = "server side"
-	default:
-		side = "unknown"
-	}
-	return side
-}
-
 type (
 	SessionHook    func(Session)
 	RetryPolicy    func(min, max time.Duration, attemptNum int) time.Duration
@@ -56,6 +37,33 @@ type Wire interface {
 	Connect() error
 }
 
+const (
+	clientSide role = 1
+	serverSide role = 2
+)
+
+type role int
+
+func (s role) IsClientSide() bool {
+	return s == clientSide
+}
+
+func (s role) IsServerSide() bool {
+	return s == serverSide
+}
+
+func (s role) String() (side string) {
+	switch s {
+	case clientSide:
+		side = "client side"
+	case serverSide:
+		side = "server side"
+	default:
+		side = "unknown"
+	}
+	return side
+}
+
 type wire struct {
 	addr string
 
@@ -63,7 +71,7 @@ type wire struct {
 	writeTimeout     time.Duration
 	sessCloseTimeout time.Duration
 
-	role          Role
+	role          role
 	openSessHook  SessionHook
 	closeSessHook SessionHook
 	onConnect     func(io.Closer)
@@ -93,10 +101,7 @@ type wire struct {
 	mu       sync.RWMutex
 }
 
-func newWire(addr string, role Role, opts ...Option) (Wire, error) {
-	if err := validateRole(role); err != nil {
-		return nil, err
-	}
+func newWire(addr string, role role, opts ...Option) (Wire, error) {
 	if len(addr) == 0 {
 		return nil, ErrAddrEmpty
 	}
@@ -132,17 +137,20 @@ func newWire(addr string, role Role, opts ...Option) (Wire, error) {
 		},
 	}
 	for _, opt := range opts {
+		if opt == nil {
+			break
+		}
 		opt(wire)
 	}
 	return wire, nil
 }
 
 func Server(addr string, opts ...Option) (Wire, error) {
-	return newWire(addr, ServerSide, opts...)
+	return newWire(addr, serverSide, opts...)
 }
 
 func Client(addr string, opts ...Option) (Wire, error) {
-	return newWire(addr, ClientSide, opts...)
+	return newWire(addr, clientSide, opts...)
 }
 
 func (w *wire) Session(sid uuid.UUID) (Session, error) {
@@ -178,9 +186,9 @@ func (w *wire) Sessions() Sessions {
 
 func (w *wire) Connect() (err error) {
 	switch w.role {
-	case ClientSide:
+	case clientSide:
 		err = w.acceptClient()
-	case ServerSide:
+	case serverSide:
 		err = w.acceptServer()
 	}
 	return err
@@ -390,7 +398,7 @@ func (w *wire) shutdown(conn io.Closer) {
 		shutdownErr.Add(err)
 	}
 
-	if w.role == ClientSide {
+	if w.role.IsClientSide() {
 		close(w.waitCh)
 	}
 
@@ -414,17 +422,16 @@ func (w *wire) registerSession(s Session) {
 }
 
 func (w *wire) unregisterSession(s Session) {
-	var sl int
+	var isEmptySessions bool
 	w.mu.Lock()
 	for _, streamName := range s.StreamNames() {
 		delete(w.streamIndex, streamName)
 	}
 	delete(w.sessions, s.ID())
-	sl = len(w.sessions)
+	isEmptySessions = len(w.sessions) == 0
 	w.mu.Unlock()
 
-	forcedCloseClient := w.role == ClientSide && sl == 0 && !w.isClosed()
-	if forcedCloseClient {
+	if w.role.IsClientSide() && isEmptySessions && !w.isClosed() {
 		w.close()
 	}
 }
@@ -475,15 +482,6 @@ func (w *wire) confirmSession(conn *yamux.Session, tv TokenValidator) (sid uuid.
 		w.verifyToken,
 		localStreamNames(w.handlers),
 	)
-}
-
-func validateRole(r Role) error {
-	switch r {
-	case ClientSide, ServerSide:
-		return nil
-	default:
-		return ErrUnknownRole
-	}
 }
 
 func localStreamNames(m map[string]Handler) (names []string) {
