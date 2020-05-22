@@ -18,6 +18,7 @@ type Session interface {
 	StreamNames() []string
 	OpenStream(name string) (Stream, error)
 	Identification() Identification
+	CloseWire() error
 }
 
 type session struct {
@@ -112,9 +113,13 @@ func (s *session) shutdown() context.Context {
 			}
 
 			cancel()
-			errCh <- s.conn.Close()
-			close(errCh)
 
+			var closeErr error
+			if !s.conn.IsClosed() {
+				closeErr = s.conn.Close()
+			}
+			errCh <- closeErr
+			close(errCh)
 			break
 		}
 	}()
@@ -187,6 +192,10 @@ func (s *session) IsClosed() bool {
 	return s.closed
 }
 
+func (s *session) CloseWire() error {
+	return s.w.Close()
+}
+
 func (s *session) Close() error {
 	if s.IsClosed() {
 		return ErrSessionClosed
@@ -198,11 +207,12 @@ func (s *session) Close() error {
 
 	errCh := make(chan error)
 	s.closeCh <- errCh
+	closeErr := <-errCh
 
-	s.w.closeSessHook(s)
 	s.w.unregisterSession(s)
+	go s.w.closeSessHook(s)
 
-	return <-errCh
+	return closeErr
 }
 
 func (s *session) OpenStream(name string) (Stream, error) {

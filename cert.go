@@ -1,6 +1,7 @@
 package wirenet
 
 import (
+	"crypto/rand"
 	"crypto/tls"
 	"path/filepath"
 )
@@ -18,7 +19,7 @@ func LoadCertificates(name string, certPath string) (*tls.Config, error) {
 	}
 
 	conf := tls.Config{Certificates: []tls.Certificate{cert}}
-	// conf.Rand = rand.Reader
+	conf.Rand = rand.Reader
 
 	return &conf, nil
 }

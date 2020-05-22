@@ -8,15 +8,15 @@ import (
 )
 
 const (
-	DefaultKeepAliveInterval   = 30 * time.Second
+	DefaultKeepAliveInterval   = 15 * time.Second
 	DefaultEnableKeepAlive     = true
-	DefaultReadTimeout         = 30 * time.Second
-	DefaultWriteTimeout        = 30 * time.Second
+	DefaultReadTimeout         = 10 * time.Second
+	DefaultWriteTimeout        = 10 * time.Second
 	DefaultAcceptBacklog       = 256
-	DefaultSessionCloseTimeout = 10 * time.Second
+	DefaultSessionCloseTimeout = 5 * time.Second
 	DefaultRetryMax            = 100
 	DefaultRetryWaitMax        = 60 * time.Second
-	DefaultRetryWaitMin        = 1 * time.Second
+	DefaultRetryWaitMin        = 5 * time.Second
 )
 
 type (
@@ -71,9 +71,6 @@ func WithRetryWait(min, max time.Duration) Option {
 
 func WithRetryMax(n int) Option {
 	return func(w *wire) {
-		if n <= 0 {
-			n = 1
-		}
 		w.retryMax = n
 	}
 }

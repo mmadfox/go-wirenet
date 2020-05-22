@@ -69,9 +69,11 @@ type wire struct {
 	onConnect     func(io.Closer)
 	transportConf *yamux.Config
 
-	closed  bool
-	closeCh chan chan *ShutdownError
-	waitCh  chan struct{}
+	closed      bool
+	conn        bool
+	connCounter int
+	closeCh     chan chan *ShutdownError
+	waitCh      chan struct{}
 
 	retryWaitMin time.Duration
 	retryWaitMax time.Duration
@@ -194,15 +196,40 @@ func (w *wire) isClosed() bool {
 	return w.closed
 }
 
+func (w *wire) isConnOk() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.conn
+}
+
+func (w *wire) setConnFlag(flag bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.conn = flag
+}
+
 func (w *wire) Close() (err error) {
+	closeup := func() {
+		w.mu.Lock()
+		w.closed = true
+		w.mu.Unlock()
+	}
+
+	if !w.isConnOk() {
+		closeup()
+		return nil
+	}
+
 	if w.isClosed() {
 		return ErrWireClosed
 	}
 
-	w.mu.Lock()
-	w.closed = true
-	w.mu.Unlock()
+	closeup()
 
+	return w.close()
+}
+
+func (w *wire) close() (err error) {
 	errCh := make(chan *ShutdownError)
 	w.closeCh <- errCh
 	shutErr := <-errCh
@@ -213,11 +240,18 @@ func (w *wire) Close() (err error) {
 }
 
 func (w *wire) acceptClient() (err error) {
-	for i := 0; ; i++ {
-		attemptNum := i
-		if attemptNum > w.retryMax || w.isClosed() {
+	tryClose := func(closer io.Closer) {
+		w.setConnFlag(false)
+		closer.Close()
+	}
+	for {
+		attemptNum := w.connCounter
+		if attemptNum >= w.retryMax || w.isClosed() {
 			break
 		}
+
+		w.connCounter++
+		w.setConnFlag(false)
 
 		conn, err := w.dial()
 		if err != nil {
@@ -226,23 +260,34 @@ func (w *wire) acceptClient() (err error) {
 				w.retryWaitMin,
 				w.retryWaitMax,
 				attemptNum)
-			time.Sleep(retryWait)
+
+			timeout := time.Now().Add(retryWait)
+			for {
+				if (timeout.Unix() <= time.Now().Unix()) || w.isClosed() {
+					break
+				}
+				time.Sleep(time.Second)
+			}
 			continue
 		}
 
+		w.setConnFlag(true)
+		w.connCounter = 0
+
 		wrapConn, serveErr := yamux.Client(conn, w.transportConf)
 		if serveErr != nil {
-			conn.Close()
+			tryClose(conn)
 			return serveErr
 		}
 
 		sid, remoteStreamNames, sErr := w.openSession(wrapConn)
 		if sErr != nil {
-			wrapConn.Close()
+			tryClose(conn)
 			return sErr
 		}
 
 		w.waitCh = make(chan struct{})
+		w.closeCh = make(chan chan *ShutdownError)
 
 		go w.shutdown(wrapConn)
 		go w.onConnect(w)
@@ -277,10 +322,15 @@ func (w *wire) acceptServer() (err error) {
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	defer func() {
+		listener.Close()
+		w.setConnFlag(false)
+	}()
 
 	go w.shutdown(listener)
 	go w.onConnect(w)
+
+	w.setConnFlag(true)
 
 	for {
 		conn, acceptErr := listener.Accept()
@@ -321,7 +371,6 @@ func (w *wire) shutdown(conn io.Closer) {
 	}
 
 	shutdownErr := NewShutdownError()
-
 	w.mu.RLock()
 	sessions := make([]Session, 0, len(w.sessions))
 	for _, sess := range w.sessions {
@@ -376,7 +425,7 @@ func (w *wire) unregisterSession(s Session) {
 
 	forcedCloseClient := w.role == ClientSide && sl == 0 && !w.isClosed()
 	if forcedCloseClient {
-		_ = w.Close()
+		w.close()
 	}
 }
 

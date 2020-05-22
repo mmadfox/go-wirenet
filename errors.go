@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	ErrClosedCommand          = errors.New("wirenet: read/write on closed command")
+	ErrStreamClosed           = errors.New("wirenet: read/write on closed stream")
 	ErrSessionNotFound        = errors.New("wirenet: session not found")
 	ErrStreamNotFound         = errors.New("wirenet: stream not found")
 	ErrWireClosed             = errors.New("wirenet closed")

@@ -61,14 +61,14 @@ func (s *stream) Name() string {
 
 func (s *stream) Write(p []byte) (n int, err error) {
 	if s.closed {
-		return 0, ErrClosedCommand
+		return 0, ErrStreamClosed
 	}
 	return s.conn.Write(p)
 }
 
 func (s *stream) Read(p []byte) (n int, err error) {
 	if s.closed {
-		return 0, ErrClosedCommand
+		return 0, ErrStreamClosed
 	}
 	return s.conn.Read(p)
 }
@@ -77,7 +77,7 @@ func (s *stream) WriteTo(w io.Writer) (n int64, err error) {
 	s.buf = s.buf[:]
 	for {
 		if s.closed {
-			return 0, ErrClosedCommand
+			return 0, ErrStreamClosed
 		}
 		nr, er := s.conn.Read(s.buf)
 		if nr > 0 {
@@ -109,7 +109,7 @@ func (s *stream) ReadFrom(r io.Reader) (n int64, err error) {
 	s.buf = s.buf[:]
 	for {
 		if s.closed {
-			return 0, ErrClosedCommand
+			return 0, ErrStreamClosed
 		}
 		nr, er := r.Read(s.buf)
 		if nr > 0 {
@@ -138,12 +138,8 @@ func (s *stream) ReadFrom(r io.Reader) (n int64, err error) {
 }
 
 func (s *stream) Close() error {
-	if s.closed {
-		return ErrClosedCommand
-	}
-
 	s.closed = true
 	s.sess.unregisterStream(s)
-
-	return s.conn.Close()
+	_ = s.conn.Close()
+	return nil
 }
