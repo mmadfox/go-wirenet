@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
-	"log"
 	"net"
 	"os"
 	"sync"
@@ -34,6 +33,21 @@ type Wire interface {
 	Stream(name string, h Handler)
 	Close() error
 	Connect() error
+}
+
+func Mount(addr string, opts ...Option) (Wire, error) {
+	return newWire(addr, serverSide, opts...)
+}
+
+func Hub(addr string, opts ...Option) (Wire, error) {
+	opts = append(opts, func(wire *wire) {
+		wire.hubMode = true
+	})
+	return newWire(addr, serverSide, opts...)
+}
+
+func Join(addr string, opts ...Option) (Wire, error) {
+	return newWire(addr, clientSide, opts...)
 }
 
 const (
@@ -76,6 +90,7 @@ type wire struct {
 	onConnect     func(io.Closer)
 	transportConf *yamux.Config
 
+	hubMode     bool
 	closed      bool
 	conn        bool
 	connCounter int
@@ -144,14 +159,6 @@ func newWire(addr string, role role, opts ...Option) (Wire, error) {
 	return wire, nil
 }
 
-func Mount(addr string, opts ...Option) (Wire, error) {
-	return newWire(addr, serverSide, opts...)
-}
-
-func Join(addr string, opts ...Option) (Wire, error) {
-	return newWire(addr, clientSide, opts...)
-}
-
 func (w *wire) Session(sid uuid.UUID) (Session, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -161,22 +168,6 @@ func (w *wire) Session(sid uuid.UUID) (Session, error) {
 	}
 	return sess, nil
 }
-
-// TODO:
-//func (w *wire) FindStream(name string) (Stream, error) {
-//	w.mu.RLock()
-//	if len(w.sessions) == 0 || w.closed {
-//		w.mu.RUnlock()
-//		return nil, ErrSessionClosed
-//	}
-//	sess, found := w.streamIndex[name]
-//	if !found {
-//		w.mu.RUnlock()
-//		return nil, ErrStreamNotFound
-//	}
-//	w.mu.RUnlock()
-//	return sess.OpenStream(name)
-//}
 
 func (w *wire) Sessions() Sessions {
 	w.mu.RLock()
@@ -202,6 +193,25 @@ func (w *wire) isClosed() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.closed
+}
+
+func (w *wire) isHubMode() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.hubMode
+}
+
+func (w *wire) findSession(name string) (Session, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if len(w.sessions) == 0 || w.closed {
+		return nil, ErrSessionClosed
+	}
+	sess, found := w.streamIndex[name]
+	if !found {
+		return nil, ErrSessionNotFound
+	}
+	return sess, nil
 }
 
 func (w *wire) isConnOk() bool {
@@ -248,9 +258,9 @@ func (w *wire) close() (err error) {
 }
 
 func (w *wire) acceptClient() (err error) {
-	tryClose := func(closer io.Closer) {
+	tryClose := func(c io.Closer) {
 		w.setConnFlag(false)
-		closer.Close()
+		c.Close()
 	}
 	for {
 		attemptNum := w.connCounter
@@ -263,7 +273,6 @@ func (w *wire) acceptClient() (err error) {
 
 		conn, err := w.dial()
 		if err != nil {
-			log.Println("dial error", err)
 			retryWait := w.retryPolicy(
 				w.retryWaitMin,
 				w.retryWaitMax,

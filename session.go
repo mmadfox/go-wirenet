@@ -126,31 +126,61 @@ func (s *session) shutdown() context.Context {
 	return ctx
 }
 
+func (s *session) verifyToken(conn *yamux.Stream) (frm frame, err error) {
+	frm, err = recvFrame(conn, func(f frame) error {
+		if s.w.verifyToken == nil {
+			return nil
+		}
+		return s.w.verifyToken(f.Command(), s.identification, f.Payload())
+	})
+	if err != nil {
+		return nil, err
+	}
+	return frm, nil
+}
+
 func (s *session) dispatchStream(ctx context.Context, conn *yamux.Stream) {
 	defer func() {
 		_ = conn.Close()
 	}()
 
-	var frm frame
-	var err error
-	if frm, err = recvFrame(conn, func(f frame) error {
-		if s.w.verifyToken == nil {
-			return nil
-		}
-		return s.w.verifyToken(f.Command(), s.identification, f.Payload())
-	}); err != nil {
+	frm, err := s.verifyToken(conn)
+	if err != nil {
 		return
 	}
 
 	conn.Shrink()
-	handler, ok := s.w.handlers[frm.Command()]
-	if !ok {
+	streamName := frm.Command()
+	if len(streamName) == 0 {
 		return
 	}
 
-	stream := openStream(s, frm.Command(), conn)
-	handler(ctx, stream)
+	if s.w.isHubMode() && !s.w.role.IsClientSide() {
+		sess, err := s.w.findSession(streamName)
+		if err == nil {
+			dst, err := sess.OpenStream(streamName)
+			if err != nil {
+				return
+			}
+			dstConn := dst.(*stream).conn
+			go func() {
+				if err := pipe(dstConn, conn); err != nil {
+				}
+			}()
+			if err := pipe(conn, dstConn); err != nil {
+			}
+			conn.Close()
+			dst.Close()
+			return
+		}
+	}
 
+	handler, ok := s.w.handlers[streamName]
+	if !ok {
+		return
+	}
+	stream := openStream(s, streamName, conn)
+	handler(ctx, stream)
 	if !stream.IsClosed() {
 		_ = stream.Close()
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,8 +27,10 @@ func makeReadStream(addr string, t *testing.T) *stream {
 
 	return &stream{
 		conn: sconn,
-		buf:  make([]byte, bufSize),
+		buf:  make([]byte, BufSize),
 		hdr:  make([]byte, hdrLen),
+		sess: new(session),
+		mu:   sync.RWMutex{},
 	}
 }
 
@@ -43,8 +46,10 @@ func makeWriteStream(addr string, t *testing.T) *stream {
 
 	return &stream{
 		conn: sconn,
-		buf:  make([]byte, bufSize),
+		buf:  make([]byte, BufSize),
 		hdr:  make([]byte, hdrLen),
+		sess: new(session),
+		mu:   sync.RWMutex{},
 	}
 }
 

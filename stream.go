@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"net"
 	"sync"
 
 	"github.com/google/uuid"
@@ -11,7 +12,7 @@ import (
 )
 
 const (
-	bufSize = 1 << 10
+	BufSize = 1 << 10
 	eof     = uint32(0)
 )
 
@@ -44,7 +45,7 @@ func openStream(sess *session, name string, conn *yamux.Stream) Stream {
 		sess: sess,
 		name: name,
 		conn: conn,
-		buf:  make([]byte, bufSize),
+		buf:  make([]byte, BufSize),
 		hdr:  make([]byte, hdrLen),
 	}
 
@@ -129,8 +130,8 @@ func (s *stream) read(offset int) (n int, err error) {
 
 func (s *stream) resetBuffers() {
 	s.hdr = s.hdr[:]
-	if len(s.buf) != bufSize {
-		s.buf = make([]byte, bufSize)
+	if len(s.buf) != BufSize {
+		s.buf = make([]byte, BufSize)
 	} else {
 		s.buf = s.buf[:]
 	}
@@ -277,7 +278,6 @@ func (r *reader) fill() error {
 		}
 		return erh
 	}
-
 	b := make([]byte, off)
 	n, err := r.read(b)
 	if err != nil {
@@ -342,6 +342,29 @@ func (r *reader) Read(p []byte) (n int, err error) {
 	n, err = r.buf.Read(p)
 	if n == 0 && r.eof {
 		return 0, io.EOF
+	}
+	return
+}
+
+func pipe(src net.Conn, dst net.Conn) (err error) {
+	b := make([]byte, BufSize)
+	for {
+		rn, er := src.Read(b)
+		if er != nil {
+			if er != io.EOF {
+				err = er
+			}
+			break
+		}
+		wn, ew := dst.Write(b[:rn])
+		if ew != nil {
+			err = ew
+			break
+		}
+		if rn != wn {
+			err = io.ErrShortWrite
+			break
+		}
 	}
 	return
 }
