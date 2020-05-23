@@ -14,7 +14,7 @@ import (
 
 func main() {
 	addr := ":9099"
-	wire, err := wirenet.Point(addr,
+	wire, err := wirenet.Mount(addr,
 		wirenet.WithSessionOpenHook(func(session wirenet.Session) {
 			log.Printf("open %s", session)
 			exec(session)

@@ -144,7 +144,7 @@ func newWire(addr string, role role, opts ...Option) (Wire, error) {
 	return wire, nil
 }
 
-func Point(addr string, opts ...Option) (Wire, error) {
+func Mount(addr string, opts ...Option) (Wire, error) {
 	return newWire(addr, serverSide, opts...)
 }
 

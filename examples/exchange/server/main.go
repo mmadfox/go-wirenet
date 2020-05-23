@@ -23,7 +23,7 @@ func main() {
 	addr := ":9888"
 
 	sesss := make(chan wirenet.Session, 1)
-	wire, err := wirenet.Point(addr,
+	wire, err := wirenet.Mount(addr,
 		wirenet.WithSessionCloseTimeout(5*time.Second),
 		wirenet.WithSessionOpenHook(func(session wirenet.Session) {
 			sesss <- session

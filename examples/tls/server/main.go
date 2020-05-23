@@ -15,7 +15,7 @@ func main() {
 		panic(err)
 	}
 
-	wire, err := wirenet.Point(":9076",
+	wire, err := wirenet.Mount(":9076",
 		wirenet.WithTLS(tlsConf),
 		wirenet.WithSessionOpenHook(func(session wirenet.Session) {
 			fmt.Printf("[INFO] session=%s, identification=%s\n",

@@ -13,7 +13,7 @@ import (
 
 func main() {
 	validToken := wirenet.Token("token")
-	wire, err := wirenet.Point(":8989",
+	wire, err := wirenet.Mount(":8989",
 		wirenet.WithTokenValidator(func(streamName string, id wirenet.Identification, token wirenet.Token) error {
 			fmt.Printf("[INFO] token validation: node=%s, stream=%s, token=%s\n",
 				id, streamName, string(token))

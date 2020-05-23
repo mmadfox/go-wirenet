@@ -35,7 +35,7 @@ type balance struct {
 func server(addr string, t *testing.T) (closer chan io.Closer) {
 	closer = make(chan io.Closer)
 	go func() {
-		srv, err := Point(addr,
+		srv, err := Mount(addr,
 			WithConnectHook(func(c io.Closer) {
 				closer <- c
 				close(closer)
@@ -78,7 +78,7 @@ func client(addr string, wg *sync.WaitGroup, t *testing.T) {
 }
 
 func TestWire_New(t *testing.T) {
-	wire, err := Point("")
+	wire, err := Mount("")
 	assert.Nil(t, wire)
 	assert.Equal(t, ErrAddrEmpty, err)
 }
@@ -335,7 +335,7 @@ func TestWire_OpenCloseSession(t *testing.T) {
 
 	// server
 	go func() {
-		srv, err := Point(addr,
+		srv, err := Mount(addr,
 			WithConnectHook(func(_ io.Closer) { close(listen) }),
 			WithSessionOpenHook(func(s Session) {
 				atomic.AddInt32(&openSessCounter, 1)
@@ -376,7 +376,7 @@ func TestWire_OpenCloseSession(t *testing.T) {
 
 func TestWire_ListenServer(t *testing.T) {
 	addr := genAddr(t)
-	wire, err := Point(addr, WithConnectHook(func(w io.Closer) {
+	wire, err := Mount(addr, WithConnectHook(func(w io.Closer) {
 		assert.Nil(t, w.Close())
 	}))
 	assert.Nil(t, err)
@@ -393,7 +393,7 @@ func TestWire_ListenClient(t *testing.T) {
 
 	// server
 	go func() {
-		srv, err := Point(addr,
+		srv, err := Mount(addr,
 			WithSessionOpenHook(func(s Session) {
 				atomic.AddInt32(&conn, 1)
 			}),

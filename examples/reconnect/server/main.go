@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	wire, err := wirenet.Point(":9876", opts()...)
+	wire, err := wirenet.Mount(":9876", opts()...)
 	if err != nil {
 		panic(err)
 	}
