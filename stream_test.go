@@ -84,5 +84,39 @@ func TestStream_ReadFromWriteTo(t *testing.T) {
 }
 
 func TestStream_ReadWrite(t *testing.T) {
+	addr := genAddr(t)
+	done := make(chan struct{})
+	want := 10000
+	payload := genPayload(want)
 
+	go func() {
+		defer close(done)
+		stream := makeReadStream(addr, t)
+		// read
+		buf := make([]byte, want)
+		n, err := stream.Read(buf)
+		assert.Nil(t, err)
+		assert.Equal(t, n, len(payload))
+		assert.Equal(t, buf, payload)
+		// write
+		n, err = stream.Write(payload)
+		assert.Nil(t, err)
+		assert.Equal(t, want, int(n))
+
+	}()
+
+	time.Sleep(time.Second)
+
+	// write
+	stream := makeWriteStream(addr, t)
+	n, err := stream.Write(payload)
+	assert.Nil(t, err)
+	assert.Equal(t, want, int(n))
+	// read
+	buf := make([]byte, want)
+	n, err = stream.Read(buf)
+	assert.Equal(t, n, len(payload))
+	assert.Equal(t, buf, payload)
+
+	<-done
 }

@@ -76,14 +76,14 @@ func (s *stream) Name() string {
 }
 
 func (s *stream) Write(p []byte) (n int, err error) {
-	if s.closed && s.sess.IsClosed() {
+	if s.IsClosed() && s.sess.IsClosed() {
 		return 0, ErrStreamClosed
 	}
 	return s.conn.Write(p)
 }
 
 func (s *stream) Read(p []byte) (n int, err error) {
-	if s.closed && s.sess.IsClosed() {
+	if s.IsClosed() && s.sess.IsClosed() {
 		return 0, ErrStreamClosed
 	}
 	return s.conn.Read(p)
