@@ -17,7 +17,9 @@ func main() {
 	}
 
 	wire.Mount("macbook:read", func(ctx context.Context, stream wirenet.Stream) {
-		stream.Write([]byte("macbook some payload"))
+		writer := stream.Writer()
+		writer.Write([]byte("macbook some payload"))
+		writer.Close()
 	})
 
 	if err := wire.Connect(); err != nil {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -33,14 +32,18 @@ func main() {
 	}
 }
 
-func ifconfig(w io.Writer) error {
+func ifconfig(s wirenet.Stream) error {
 	cmd := exec.Command("ifconfig")
-	cmd.Stdout = w
+	writer := s.Writer()
+	defer writer.Close()
+	cmd.Stdout = writer
 	return cmd.Run()
 }
 
-func envPath(w io.Writer) error {
+func envPath(s wirenet.Stream) error {
 	cmd := exec.Command("echo", os.Getenv("PATH"))
-	cmd.Stdout = w
+	writer := s.Writer()
+	defer writer.Close()
+	cmd.Stdout = writer
 	return cmd.Run()
 }

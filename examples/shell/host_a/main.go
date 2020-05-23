@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -22,7 +21,7 @@ func main() {
 		fromServer := amountFromServer(stream.Session())
 		fmt.Printf("retrieve from server: %s \n", fromServer)
 
-		if err := ping(stream); err != nil {
+		if err := ifconfig(stream); err != nil {
 			log.Println("ping error", err)
 		}
 	})
@@ -45,18 +44,24 @@ func amountFromServer(sess wirenet.Session) (str string) {
 		return ""
 	}
 	defer amount.Close()
-	json.NewDecoder(amount).Decode(&str)
+	reader := amount.Reader()
+	json.NewDecoder(reader).Decode(&str)
+	reader.Close()
 	return
 }
 
-func ping(w io.Writer) error {
-	cmd := exec.Command("ping", "google.com", "-c", "50")
-	cmd.Stdout = w
+func ifconfig(s wirenet.Stream) error {
+	cmd := exec.Command("ifconfig")
+	writer := s.Writer()
+	defer writer.Close()
+	cmd.Stdout = writer
 	return cmd.Run()
 }
 
-func envPath(w io.Writer) error {
+func envPath(s wirenet.Stream) error {
 	cmd := exec.Command("echo", os.Getenv("PATH"))
-	cmd.Stdout = w
+	writer := s.Writer()
+	defer writer.Close()
+	cmd.Stdout = writer
 	return cmd.Run()
 }

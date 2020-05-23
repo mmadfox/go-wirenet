@@ -1,6 +1,7 @@
 package wirenet
 
 import (
+	"bytes"
 	"encoding/binary"
 	"io"
 	"sync"
@@ -9,20 +10,21 @@ import (
 	"github.com/hashicorp/yamux"
 )
 
-const bufSize = 1 << 10
-const eof = uint32(0)
+const (
+	bufSize = 1 << 10
+	eof     = uint32(0)
+)
 
 type Stream interface {
 	ID() uuid.UUID
 	Session() Session
 	Name() string
 	IsClosed() bool
-
+	Reader() io.ReadCloser
+	Writer() io.WriteCloser
 	io.Closer
 	io.ReaderFrom
 	io.WriterTo
-	io.Writer
-	io.Reader
 }
 
 type stream struct {
@@ -75,20 +77,6 @@ func (s *stream) Name() string {
 	return s.name
 }
 
-func (s *stream) Write(p []byte) (n int, err error) {
-	if s.IsClosed() && s.sess.IsClosed() {
-		return 0, ErrStreamClosed
-	}
-	return s.conn.Write(p)
-}
-
-func (s *stream) Read(p []byte) (n int, err error) {
-	if s.IsClosed() && s.sess.IsClosed() {
-		return 0, ErrStreamClosed
-	}
-	return s.conn.Read(p)
-}
-
 func (s *stream) writeEOF() error {
 	if err := binary.Write(s.conn, binary.LittleEndian, eof); err != nil {
 		return err
@@ -139,12 +127,20 @@ func (s *stream) read(offset int) (n int, err error) {
 	return
 }
 
+func (s *stream) resetBuffers() {
+	s.hdr = s.hdr[:]
+	if len(s.buf) != bufSize {
+		s.buf = make([]byte, bufSize)
+	} else {
+		s.buf = s.buf[:]
+	}
+}
+
 func (s *stream) WriteTo(w io.Writer) (n int64, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.buf = s.buf[:]
-	s.hdr = s.hdr[:]
+	s.resetBuffers()
 
 	for {
 		if s.closed && s.sess.IsClosed() {
@@ -190,8 +186,7 @@ func (s *stream) ReadFrom(r io.Reader) (n int64, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.hdr = s.hdr[:]
-	s.buf = s.buf[:]
+	s.resetBuffers()
 
 	for {
 		if s.closed && s.sess.IsClosed() {
@@ -228,6 +223,18 @@ func (s *stream) ReadFrom(r io.Reader) (n int64, err error) {
 	return
 }
 
+func (s *stream) Reader() io.ReadCloser {
+	return &reader{
+		stream: s,
+	}
+}
+
+func (s *stream) Writer() io.WriteCloser {
+	return &writer{
+		stream: s,
+	}
+}
+
 func (s *stream) Close() error {
 	s.mu.Lock()
 	s.closed = true
@@ -236,4 +243,105 @@ func (s *stream) Close() error {
 	s.sess.unregisterStream(s)
 	_ = s.conn.Close()
 	return nil
+}
+
+type writer struct {
+	stream *stream
+}
+
+func (w *writer) Write(p []byte) (n int, err error) {
+	if w.stream.IsClosed() && w.stream.sess.IsClosed() {
+		return 0, ErrStreamClosed
+	}
+	if err := w.stream.writeHdr(len(p)); err != nil {
+		return 0, err
+	}
+	return w.stream.conn.Write(p)
+}
+
+func (w *writer) Close() error {
+	return w.stream.writeEOF()
+}
+
+type reader struct {
+	stream *stream
+	buf    *bytes.Buffer
+	eof    bool
+}
+
+func (r *reader) fill() error {
+	off, erh := r.stream.readHeader()
+	if erh != nil {
+		if erh == io.EOF {
+			r.eof = true
+		}
+		return erh
+	}
+
+	b := make([]byte, off)
+	n, err := r.read(b)
+	if err != nil {
+		return err
+	}
+	if n != off {
+		return io.ErrShortBuffer
+	}
+
+	nw, erw := r.buf.Write(b)
+	if erw != nil {
+		return erw
+	}
+	if n != nw {
+		return io.ErrShortWrite
+	}
+	return nil
+}
+
+func (r *reader) read(p []byte) (n int, err error) {
+	for n < len(p) {
+		rn, re := r.stream.conn.Read(p)
+		if re != nil {
+			if re != io.EOF {
+				return 0, re
+			}
+			err = re
+			break
+		}
+		if rn > 0 {
+			n += rn
+		}
+		if n == len(p) {
+			break
+		}
+	}
+	return
+}
+
+func (r *reader) Close() error {
+	if r.buf != nil {
+		r.buf.Reset()
+	}
+	r.eof = false
+	return nil
+}
+
+func (r *reader) Read(p []byte) (n int, err error) {
+	if r.stream.IsClosed() && r.stream.sess.IsClosed() {
+		return 0, ErrStreamClosed
+	}
+	if r.buf == nil {
+		r.buf = new(bytes.Buffer)
+	}
+	total := r.buf.Len()
+	for total < len(p) && !r.eof {
+		if fer := r.fill(); fer != nil {
+			break
+		}
+		total = r.buf.Len()
+	}
+	n, err = r.buf.Read(p)
+	if n == 0 && r.eof {
+		return 0, io.EOF
+	}
+	return
 }

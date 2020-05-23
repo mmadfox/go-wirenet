@@ -17,7 +17,9 @@ func main() {
 	}
 
 	wire.Mount("digitalocean:read", func(ctx context.Context, stream wirenet.Stream) {
-		stream.Write([]byte("digitalocean some payload"))
+		writer := stream.Writer()
+		writer.Write([]byte("digitalocean some payload"))
+		writer.Close()
 	})
 
 	if err := wire.Connect(); err != nil {

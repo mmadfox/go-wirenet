@@ -17,7 +17,9 @@ func main() {
 	}
 
 	wire.Mount("aws:read", func(ctx context.Context, stream wirenet.Stream) {
-		stream.Write([]byte("aws some payload"))
+		writer := stream.Writer()
+		writer.Write([]byte("aws some payload"))
+		writer.Close()
 	})
 
 	if err := wire.Connect(); err != nil {

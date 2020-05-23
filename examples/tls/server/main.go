@@ -28,7 +28,9 @@ func main() {
 	wire.Mount("info", func(ctx context.Context, stream wirenet.Stream) {
 		for !stream.IsClosed() {
 			time.Sleep(time.Second)
-			stream.Write([]byte("HELLO FROM SERVER!"))
+			writer := stream.Writer()
+			writer.Write([]byte("HELLO FROM SERVER!"))
+			writer.Close()
 		}
 	})
 

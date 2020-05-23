@@ -28,10 +28,11 @@ func main() {
 	}
 
 	wire.Mount("binance:quotes", func(ctx context.Context, stream wirenet.Stream) {
+		writter := stream.Writer()
 		for {
 			wait()
 
-			if err := json.NewEncoder(stream).Encode(Quote{
+			if err := json.NewEncoder(writter).Encode(Quote{
 				Price:     rand.Intn(1000),
 				Timestamp: time.Now().Unix(),
 				Symbol:    "USD",
@@ -39,6 +40,7 @@ func main() {
 				fmt.Printf("[ERROR] json encode error %v", err)
 				return
 			}
+			writter.Close()
 		}
 	})
 

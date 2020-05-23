@@ -28,7 +28,9 @@ func main() {
 	}
 
 	wire.Mount("amount", func(_ context.Context, stream wirenet.Stream) {
-		json.NewEncoder(stream).Encode("amount")
+		writer := stream.Writer()
+		json.NewEncoder(writer).Encode("amount")
+		writer.Close()
 	})
 	go func() {
 		log.Println("shell server is running...")

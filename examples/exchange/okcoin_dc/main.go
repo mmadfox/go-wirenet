@@ -28,10 +28,11 @@ func main() {
 	}
 
 	wire.Mount("okcoin:quotes", func(ctx context.Context, stream wirenet.Stream) {
+		writer := stream.Writer()
 		for {
 			wait()
 
-			if err := json.NewEncoder(stream).Encode(Quote{
+			if err := json.NewEncoder(writer).Encode(Quote{
 				Price:     rand.Intn(100),
 				Timestamp: time.Now().Unix(),
 				Symbol:    "EUR",
@@ -39,6 +40,7 @@ func main() {
 				fmt.Printf("[ERROR] json encode error %v", err)
 				return
 			}
+			writer.Close()
 		}
 	})
 

@@ -65,8 +65,9 @@ func read(streamName string, session wirenet.Session) {
 			streamName, err)
 	}
 	var quote Quote
+	reader := stream.Reader()
 	for {
-		if err := json.NewDecoder(stream).Decode(&quote); err != nil {
+		if err := json.NewDecoder(reader).Decode(&quote); err != nil {
 			if err != io.EOF {
 				fmt.Printf("[ERROR] json decode %v", err)
 			}
@@ -75,6 +76,7 @@ func read(streamName string, session wirenet.Session) {
 		fmt.Printf("Quote:  exchange=%s, price=%d, symbol=%s, ts=%d\n",
 			streamName, quote.Price, quote.Symbol, quote.Timestamp)
 	}
+	reader.Close()
 	if err := session.Close(); err != nil {
 		log.Println("close session error", err)
 	}

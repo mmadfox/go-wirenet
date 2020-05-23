@@ -50,19 +50,23 @@ func read(sess wirenet.Session) {
 	}
 	defer stream.Close()
 
-	if err := binary.Write(stream, binary.LittleEndian, uint32(startIndex)); err != nil {
+	writer := stream.Writer()
+	if err := binary.Write(writer, binary.LittleEndian, uint32(startIndex)); err != nil {
 		log.Println("write error", err)
 	}
+	writer.Close()
 
+	reader := stream.Reader()
 	buf := make([]byte, 32)
 	for {
-		n, err := stream.Read(buf)
+		n, err := reader.Read(buf)
 		if err != nil || n == 0 {
 			break
 		}
 		os.Stdout.Write(buf)
 		startIndex++
 	}
+	reader.Close()
 
 	if startIndex >= 20 {
 		log.Println("data complete!")

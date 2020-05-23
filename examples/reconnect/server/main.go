@@ -20,17 +20,21 @@ func main() {
 	}
 
 	wire.Mount("sayHello", func(ctx context.Context, stream wirenet.Stream) {
+		reader := stream.Reader()
 		var startIndex uint32
-		if err := binary.Read(stream, binary.LittleEndian, &startIndex); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &startIndex); err != nil {
 			log.Println("read error", err)
 			return
 		}
+		reader.Close()
+
+		writer := stream.Writer()
 		for i := startIndex; ; i++ {
 			if i > 20 {
 				break
 			}
 			payload := []byte(fmt.Sprintf("%d. Hello from server! ", i))
-			n, err := stream.Write(payload)
+			n, err := writer.Write(payload)
 			if err != nil || n == 0 {
 				return
 			}
