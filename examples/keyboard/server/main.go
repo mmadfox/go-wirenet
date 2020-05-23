@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	wire, err := wirenet.Server(":8976", nil)
+	wire, err := wirenet.Point(":8976", nil)
 	if err != nil {
 		panic(err)
 	}

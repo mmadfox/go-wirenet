@@ -20,13 +20,13 @@ func main() {
 	id := wirenet.Identification(*identification)
 	tk := wirenet.Token(*token)
 
-	wire, err := wirenet.Client(":8976",
+	wire, err := wirenet.Join(":8976",
 		wirenet.WithIdentification(id, tk))
 	if err != nil {
 		panic(err)
 	}
 
-	wire.Mount("shell", func(ctx context.Context, stream wirenet.Stream) {
+	wire.Stream("shell", func(ctx context.Context, stream wirenet.Stream) {
 		fmt.Println("[SHELL]")
 		if err := shell(stream); err != nil {
 			fmt.Printf("[ERROR] shell error %v\n", err)

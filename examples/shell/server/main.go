@@ -14,12 +14,12 @@ import (
 
 func main() {
 	addr := ":9099"
-	wire, err := wirenet.Server(addr,
-		wirenet.WithOpenSessionHook(func(session wirenet.Session) {
+	wire, err := wirenet.Point(addr,
+		wirenet.WithSessionOpenHook(func(session wirenet.Session) {
 			log.Printf("open %s", session)
 			exec(session)
 		}),
-		wirenet.WithCloseSessionHook(func(session wirenet.Session) {
+		wirenet.WithSessionCloseHook(func(session wirenet.Session) {
 			log.Printf("close %s", session)
 		}),
 	)
@@ -27,7 +27,7 @@ func main() {
 		panic(err)
 	}
 
-	wire.Mount("amount", func(_ context.Context, stream wirenet.Stream) {
+	wire.Stream("amount", func(_ context.Context, stream wirenet.Stream) {
 		writer := stream.Writer()
 		json.NewEncoder(writer).Encode("amount")
 		writer.Close()

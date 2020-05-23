@@ -31,13 +31,13 @@ func WithConnectHook(hook func(io.Closer)) Option {
 	}
 }
 
-func WithOpenSessionHook(hook SessionHook) Option {
+func WithSessionOpenHook(hook SessionHook) Option {
 	return func(w *wire) {
 		w.openSessHook = hook
 	}
 }
 
-func WithCloseSessionHook(hook SessionHook) Option {
+func WithSessionCloseHook(hook SessionHook) Option {
 	return func(w *wire) {
 		w.closeSessHook = hook
 	}

@@ -167,3 +167,39 @@ func TestStream_ReaderWriterJSON(t *testing.T) {
 
 	<-done
 }
+
+func TestStream_ReadWriteTo(t *testing.T) {
+	addr := genAddr(t)
+	done := make(chan struct{})
+	want := "HELLO"
+
+	go func() {
+		defer close(done)
+		stream := makeReadStream(addr, t)
+		reader := stream.Reader()
+		read := 0
+		buf := make([]byte, 1)
+		res := bytes.NewBuffer(nil)
+		for {
+			n, err := reader.Read(buf)
+			if err != nil {
+				break
+			}
+			res.Write(buf[:n])
+			read += n
+		}
+		assert.Equal(t, len(want), read)
+		assert.Equal(t, want, res.String())
+		assert.Nil(t, reader.Close())
+	}()
+
+	time.Sleep(time.Second)
+
+	// write
+	stream := makeWriteStream(addr, t)
+	n, err := stream.ReadFrom(bytes.NewReader([]byte(want)))
+	assert.Nil(t, err)
+	assert.Equal(t, len(want), int(n))
+
+	<-done
+}

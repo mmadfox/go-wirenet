@@ -9,14 +9,14 @@ import (
 func main() {
 	token := wirenet.Token("token")
 	identification := wirenet.Identification("macbook.svc")
-	wire, err := wirenet.Client(":8989",
+	wire, err := wirenet.Join(":8989",
 		wirenet.WithIdentification(identification, token),
 	)
 	if err != nil {
 		panic(err)
 	}
 
-	wire.Mount("macbook:read", func(ctx context.Context, stream wirenet.Stream) {
+	wire.Stream("macbook:read", func(ctx context.Context, stream wirenet.Stream) {
 		writer := stream.Writer()
 		writer.Write([]byte("macbook some payload"))
 		writer.Close()

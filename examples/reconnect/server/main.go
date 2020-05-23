@@ -14,12 +14,12 @@ import (
 )
 
 func main() {
-	wire, err := wirenet.Server(":9876", opts()...)
+	wire, err := wirenet.Point(":9876", opts()...)
 	if err != nil {
 		panic(err)
 	}
 
-	wire.Mount("sayHello", func(ctx context.Context, stream wirenet.Stream) {
+	wire.Stream("sayHello", func(ctx context.Context, stream wirenet.Stream) {
 		reader := stream.Reader()
 		var startIndex uint32
 		if err := binary.Read(reader, binary.LittleEndian, &startIndex); err != nil {
@@ -69,10 +69,10 @@ func terminate() chan struct{} {
 
 func opts() []wirenet.Option {
 	return []wirenet.Option{
-		wirenet.WithOpenSessionHook(func(session wirenet.Session) {
+		wirenet.WithSessionOpenHook(func(session wirenet.Session) {
 			log.Printf("open session id=%s", session.ID())
 		}),
-		wirenet.WithCloseSessionHook(func(session wirenet.Session) {
+		wirenet.WithSessionCloseHook(func(session wirenet.Session) {
 			log.Printf("close session id=%s", session.ID())
 		}),
 	}

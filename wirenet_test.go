@@ -1,7 +1,6 @@
 package wirenet
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,8 +10,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -38,13 +35,13 @@ type balance struct {
 func server(addr string, t *testing.T) (closer chan io.Closer) {
 	closer = make(chan io.Closer)
 	go func() {
-		srv, err := Server(addr,
+		srv, err := Point(addr,
 			WithConnectHook(func(c io.Closer) {
 				closer <- c
 				close(closer)
 			}))
 		assert.Nil(t, err)
-		srv.Mount("server:readBalance", func(ctx context.Context, stream Stream) {
+		srv.Stream("server:readBalance", func(ctx context.Context, stream Stream) {
 			writer := stream.Writer()
 			defer func() {
 				assert.Nil(t, writer.Close())
@@ -64,7 +61,7 @@ func server(addr string, t *testing.T) (closer chan io.Closer) {
 
 func client(addr string, wg *sync.WaitGroup, t *testing.T) {
 	go func() {
-		cli, err := Client(addr, WithOpenSessionHook(func(s Session) {
+		cli, err := Join(addr, WithSessionOpenHook(func(s Session) {
 			stream, err := s.OpenStream("server:readBalance")
 			assert.Nil(t, err)
 			defer stream.Close()
@@ -81,7 +78,7 @@ func client(addr string, wg *sync.WaitGroup, t *testing.T) {
 }
 
 func TestWire_New(t *testing.T) {
-	wire, err := Server("")
+	wire, err := Point("")
 	assert.Nil(t, wire)
 	assert.Equal(t, ErrAddrEmpty, err)
 }
@@ -134,7 +131,7 @@ func TestWire_Close(t *testing.T) {
 //		go func() {
 //			init := make(chan struct{})
 //			cli, err := Client(addr,
-//				WithOpenSessionHook(func(s Session) {
+//				WithSessionOpenHook(func(s Session) {
 //					close(init)
 //				}),
 //				WithSessionCloseTimeout(time.Second),
@@ -167,165 +164,165 @@ func TestWire_Close(t *testing.T) {
 //	assert.Nil(t, wireSrv.Close())
 //}
 
-func TestWire_StreamServerToClient(t *testing.T) {
-	addr := genAddr(t)
-	listen := make(chan struct{})
-	workerNum := 5
-	want := workerNum * 7
-	var have int
-	counter := make(chan int, workerNum)
+//func TestWire_StreamServerToClient(t *testing.T) {
+//	addr := genAddr(t)
+//	listen := make(chan struct{})
+//	workerNum := 5
+//	want := workerNum * 7
+//	var have int
+//	counter := make(chan int, workerNum)
+//
+//	// server side
+//	go func() {
+//		sessions := make(chan uuid.UUID)
+//		srv, err := Server(addr,
+//			WithSessionOpenHook(func(s Session) {
+//				sessions <- s.ID()
+//			}),
+//			WithConnectHook(func(closer io.Closer) {
+//				close(listen)
+//			}))
+//		assert.Nil(t, err)
+//		go func() {
+//			var sessCount int
+//			for sessCount < workerNum {
+//				select {
+//				case <-sessions:
+//					sessCount++
+//				}
+//			}
+//			for c := 0; c < sessCount; c++ {
+//				st, err := srv.Stream(fmt.Sprintf("host%d:cat", c))
+//				assert.Nil(t, err)
+//				writer := st.Writer()
+//				payload := fmt.Sprintf("string%d", c)
+//				n, err := writer.Write([]byte(payload))
+//				assert.Nil(t, err)
+//				assert.Equal(t, len(payload), n)
+//				assert.Nil(t, writer.Close())
+//			}
+//		}()
+//		assert.Nil(t, srv.Connect())
+//	}()
+//	<-listen
+//
+//	var wg sync.WaitGroup
+//	for i := 0; i < workerNum; i++ {
+//		wg.Add(1)
+//		go func(n int) {
+//			cli, err := Client(addr)
+//			assert.Nil(t, err)
+//			cli.Stream(fmt.Sprintf("host%d:cat", n), func(ctx context.Context, s Stream) {
+//				str := make([]byte, 7)
+//				reader := s.Reader()
+//				n, err := reader.Read(str)
+//				assert.Nil(t, err)
+//				assert.NotEmpty(t, n)
+//				assert.Contains(t, string(str), "string")
+//				assert.Nil(t, reader.Close())
+//				counter <- n
+//				wg.Done()
+//			})
+//			assert.Nil(t, cli.Connect())
+//		}(i)
+//	}
+//	wg.Wait()
+//
+//	for i := 0; i < workerNum; i++ {
+//		have += <-counter
+//	}
+//	assert.Equal(t, want, have)
+//}
 
-	// server side
-	go func() {
-		sessions := make(chan uuid.UUID)
-		srv, err := Server(addr,
-			WithOpenSessionHook(func(s Session) {
-				sessions <- s.ID()
-			}),
-			WithConnectHook(func(closer io.Closer) {
-				close(listen)
-			}))
-		assert.Nil(t, err)
-		go func() {
-			var sessCount int
-			for sessCount < workerNum {
-				select {
-				case <-sessions:
-					sessCount++
-				}
-			}
-			for c := 0; c < sessCount; c++ {
-				st, err := srv.Stream(fmt.Sprintf("host%d:cat", c))
-				assert.Nil(t, err)
-				writer := st.Writer()
-				payload := fmt.Sprintf("string%d", c)
-				n, err := writer.Write([]byte(payload))
-				assert.Nil(t, err)
-				assert.Equal(t, len(payload), n)
-				assert.Nil(t, writer.Close())
-			}
-		}()
-		assert.Nil(t, srv.Connect())
-	}()
-	<-listen
+//func TestWire_StreamClientToServerJSON(t *testing.T) {
+//	addr := genAddr(t)
+//	listen := make(chan struct{})
+//	var wireSrv Wire
+//	type want struct {
+//		Name string
+//		Age  int
+//	}
+//	go func() {
+//		srv, err := Server(addr, WithConnectHook(func(_ io.Closer) {
+//			close(listen)
+//		}))
+//		assert.Nil(t, err)
+//		srv.Stream("ls", func(ctx context.Context, ls Stream) {
+//			writer := ls.Writer()
+//			// doing...
+//			err := json.NewEncoder(writer).Encode(want{Name: "name", Age: 888})
+//			assert.Nil(t, err)
+//			assert.Nil(t, writer.Close())
+//		})
+//		wireSrv = srv
+//		srv.Connect()
+//	}()
+//	<-listen
+//
+//	init := make(chan struct{})
+//	cli, err := Client(addr,
+//		WithSessionOpenHook(func(s Session) {
+//			close(init)
+//		}),
+//		WithSessionCloseTimeout(time.Second))
+//	go func() {
+//		<-init
+//		ls, err := cli.Stream("ls")
+//		assert.Nil(t, err)
+//		reader := ls.Reader()
+//		var res want
+//		err = json.NewDecoder(reader).Decode(&res)
+//		assert.Nil(t, err)
+//		assert.Equal(t, "name", res.Name)
+//		assert.Equal(t, 888, res.Age)
+//		assert.Nil(t, reader.Close())
+//		assert.Nil(t, cli.Close())
+//	}()
+//	assert.Nil(t, err)
+//	assert.Nil(t, cli.Connect())
+//	assert.Nil(t, wireSrv.Close())
+//}
 
-	var wg sync.WaitGroup
-	for i := 0; i < workerNum; i++ {
-		wg.Add(1)
-		go func(n int) {
-			cli, err := Client(addr)
-			assert.Nil(t, err)
-			cli.Mount(fmt.Sprintf("host%d:cat", n), func(ctx context.Context, s Stream) {
-				str := make([]byte, 7)
-				reader := s.Reader()
-				n, err := reader.Read(str)
-				assert.Nil(t, err)
-				assert.NotEmpty(t, n)
-				assert.Contains(t, string(str), "string")
-				assert.Nil(t, reader.Close())
-				counter <- n
-				wg.Done()
-			})
-			assert.Nil(t, cli.Connect())
-		}(i)
-	}
-	wg.Wait()
-
-	for i := 0; i < workerNum; i++ {
-		have += <-counter
-	}
-	assert.Equal(t, want, have)
-}
-
-func TestWire_StreamClientToServerJSON(t *testing.T) {
-	addr := genAddr(t)
-	listen := make(chan struct{})
-	var wireSrv Wire
-	type want struct {
-		Name string
-		Age  int
-	}
-	go func() {
-		srv, err := Server(addr, WithConnectHook(func(_ io.Closer) {
-			close(listen)
-		}))
-		assert.Nil(t, err)
-		srv.Mount("ls", func(ctx context.Context, ls Stream) {
-			writer := ls.Writer()
-			// doing...
-			err := json.NewEncoder(writer).Encode(want{Name: "name", Age: 888})
-			assert.Nil(t, err)
-			assert.Nil(t, writer.Close())
-		})
-		wireSrv = srv
-		srv.Connect()
-	}()
-	<-listen
-
-	init := make(chan struct{})
-	cli, err := Client(addr,
-		WithOpenSessionHook(func(s Session) {
-			close(init)
-		}),
-		WithSessionCloseTimeout(time.Second))
-	go func() {
-		<-init
-		ls, err := cli.Stream("ls")
-		assert.Nil(t, err)
-		reader := ls.Reader()
-		var res want
-		err = json.NewDecoder(reader).Decode(&res)
-		assert.Nil(t, err)
-		assert.Equal(t, "name", res.Name)
-		assert.Equal(t, 888, res.Age)
-		assert.Nil(t, reader.Close())
-		assert.Nil(t, cli.Close())
-	}()
-	assert.Nil(t, err)
-	assert.Nil(t, cli.Connect())
-	assert.Nil(t, wireSrv.Close())
-}
-
-func TestWire_StreamClientToServer(t *testing.T) {
-	addr := genAddr(t)
-	listen := make(chan struct{})
-	var wireSrv Wire
-	want := []byte("wirenet")
-	go func() {
-		srv, err := Server(addr, WithConnectHook(func(_ io.Closer) {
-			close(listen)
-		}))
-		assert.Nil(t, err)
-		srv.Mount("ls", func(ctx context.Context, ls Stream) {
-			n, err := ls.ReadFrom(bytes.NewReader(want))
-			assert.Nil(t, err)
-			assert.Equal(t, int64(len(want)), n)
-		})
-		wireSrv = srv
-		srv.Connect()
-	}()
-	<-listen
-
-	init := make(chan struct{})
-	cli, err := Client(addr,
-		WithOpenSessionHook(func(s Session) {
-			close(init)
-		}),
-		WithSessionCloseTimeout(time.Second))
-	go func() {
-		<-init
-		ls, err := cli.Stream("ls")
-		assert.Nil(t, err)
-		buf := bytes.NewBuffer(nil)
-		n, err := ls.WriteTo(buf)
-		assert.Nil(t, err)
-		assert.Equal(t, int64(len(want)), n)
-		assert.Nil(t, cli.Close())
-	}()
-	assert.Nil(t, err)
-	assert.Nil(t, cli.Connect())
-	assert.Nil(t, wireSrv.Close())
-}
+//func TestWire_StreamClientToServer(t *testing.T) {
+//	addr := genAddr(t)
+//	listen := make(chan struct{})
+//	var wireSrv Wire
+//	want := []byte("wirenet")
+//	go func() {
+//		srv, err := Server(addr, WithConnectHook(func(_ io.Closer) {
+//			close(listen)
+//		}))
+//		assert.Nil(t, err)
+//		srv.Stream("ls", func(ctx context.Context, ls Stream) {
+//			n, err := ls.ReadFrom(bytes.NewReader(want))
+//			assert.Nil(t, err)
+//			assert.Equal(t, int64(len(want)), n)
+//		})
+//		wireSrv = srv
+//		srv.Connect()
+//	}()
+//	<-listen
+//
+//	init := make(chan struct{})
+//	cli, err := Client(addr,
+//		WithSessionOpenHook(func(s Session) {
+//			close(init)
+//		}),
+//		WithSessionCloseTimeout(time.Second))
+//	go func() {
+//		<-init
+//		ls, err := cli.Stream("ls")
+//		assert.Nil(t, err)
+//		buf := bytes.NewBuffer(nil)
+//		n, err := ls.WriteTo(buf)
+//		assert.Nil(t, err)
+//		assert.Equal(t, int64(len(want)), n)
+//		assert.Nil(t, cli.Close())
+//	}()
+//	assert.Nil(t, err)
+//	assert.Nil(t, cli.Connect())
+//	assert.Nil(t, wireSrv.Close())
+//}
 
 func TestWire_OpenCloseSession(t *testing.T) {
 	addr := genAddr(t)
@@ -338,12 +335,12 @@ func TestWire_OpenCloseSession(t *testing.T) {
 
 	// server
 	go func() {
-		srv, err := Server(addr,
+		srv, err := Point(addr,
 			WithConnectHook(func(_ io.Closer) { close(listen) }),
-			WithOpenSessionHook(func(s Session) {
+			WithSessionOpenHook(func(s Session) {
 				atomic.AddInt32(&openSessCounter, 1)
 			}),
-			WithCloseSessionHook(func(s Session) {
+			WithSessionCloseHook(func(s Session) {
 				atomic.AddInt32(&closeSessCounter, 1)
 			}))
 		assert.Nil(t, err)
@@ -357,7 +354,7 @@ func TestWire_OpenCloseSession(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			open := make(chan struct{})
-			wireCli, err := Client(addr, WithOpenSessionHook(func(s Session) {
+			wireCli, err := Join(addr, WithSessionOpenHook(func(s Session) {
 				close(open)
 			}))
 			go func() {
@@ -379,7 +376,7 @@ func TestWire_OpenCloseSession(t *testing.T) {
 
 func TestWire_ListenServer(t *testing.T) {
 	addr := genAddr(t)
-	wire, err := Server(addr, WithConnectHook(func(w io.Closer) {
+	wire, err := Point(addr, WithConnectHook(func(w io.Closer) {
 		assert.Nil(t, w.Close())
 	}))
 	assert.Nil(t, err)
@@ -396,8 +393,8 @@ func TestWire_ListenClient(t *testing.T) {
 
 	// server
 	go func() {
-		srv, err := Server(addr,
-			WithOpenSessionHook(func(s Session) {
+		srv, err := Point(addr,
+			WithSessionOpenHook(func(s Session) {
 				atomic.AddInt32(&conn, 1)
 			}),
 			WithConnectHook(func(_ io.Closer) {
@@ -411,7 +408,7 @@ func TestWire_ListenClient(t *testing.T) {
 
 	go func() {
 		// client
-		wireCli, err := Client(addr, WithOpenSessionHook(func(s Session) {
+		wireCli, err := Join(addr, WithSessionOpenHook(func(s Session) {
 			atomic.AddInt32(&conn, 1)
 			s.Close()
 			close(client)

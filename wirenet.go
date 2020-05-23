@@ -31,8 +31,7 @@ type (
 type Wire interface {
 	Sessions() Sessions
 	Session(sessionID uuid.UUID) (Session, error)
-	Mount(name string, h Handler)
-	Stream(name string) (Stream, error)
+	Stream(name string, h Handler)
 	Close() error
 	Connect() error
 }
@@ -145,11 +144,11 @@ func newWire(addr string, role role, opts ...Option) (Wire, error) {
 	return wire, nil
 }
 
-func Server(addr string, opts ...Option) (Wire, error) {
+func Point(addr string, opts ...Option) (Wire, error) {
 	return newWire(addr, serverSide, opts...)
 }
 
-func Client(addr string, opts ...Option) (Wire, error) {
+func Join(addr string, opts ...Option) (Wire, error) {
 	return newWire(addr, clientSide, opts...)
 }
 
@@ -163,20 +162,21 @@ func (w *wire) Session(sid uuid.UUID) (Session, error) {
 	return sess, nil
 }
 
-func (w *wire) Stream(name string) (Stream, error) {
-	w.mu.RLock()
-	if len(w.sessions) == 0 || w.closed {
-		w.mu.RUnlock()
-		return nil, ErrSessionClosed
-	}
-	sess, found := w.streamIndex[name]
-	if !found {
-		w.mu.RUnlock()
-		return nil, ErrStreamNotFound
-	}
-	w.mu.RUnlock()
-	return sess.OpenStream(name)
-}
+// TODO:
+//func (w *wire) FindStream(name string) (Stream, error) {
+//	w.mu.RLock()
+//	if len(w.sessions) == 0 || w.closed {
+//		w.mu.RUnlock()
+//		return nil, ErrSessionClosed
+//	}
+//	sess, found := w.streamIndex[name]
+//	if !found {
+//		w.mu.RUnlock()
+//		return nil, ErrStreamNotFound
+//	}
+//	w.mu.RUnlock()
+//	return sess.OpenStream(name)
+//}
 
 func (w *wire) Sessions() Sessions {
 	w.mu.RLock()
@@ -194,7 +194,7 @@ func (w *wire) Connect() (err error) {
 	return err
 }
 
-func (w *wire) Mount(name string, h Handler) {
+func (w *wire) Stream(name string, h Handler) {
 	w.handlers[name] = h
 }
 

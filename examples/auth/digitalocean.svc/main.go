@@ -9,14 +9,14 @@ import (
 func main() {
 	token := wirenet.Token("badtoken")
 	identification := wirenet.Identification("digitalocean.svc")
-	wire, err := wirenet.Client(":8989",
+	wire, err := wirenet.Join(":8989",
 		wirenet.WithIdentification(identification, token),
 	)
 	if err != nil {
 		panic(err)
 	}
 
-	wire.Mount("digitalocean:read", func(ctx context.Context, stream wirenet.Stream) {
+	wire.Stream("digitalocean:read", func(ctx context.Context, stream wirenet.Stream) {
 		writer := stream.Writer()
 		writer.Write([]byte("digitalocean some payload"))
 		writer.Close()

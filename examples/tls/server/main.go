@@ -15,9 +15,9 @@ func main() {
 		panic(err)
 	}
 
-	wire, err := wirenet.Server(":9076",
+	wire, err := wirenet.Point(":9076",
 		wirenet.WithTLS(tlsConf),
-		wirenet.WithOpenSessionHook(func(session wirenet.Session) {
+		wirenet.WithSessionOpenHook(func(session wirenet.Session) {
 			fmt.Printf("[INFO] session=%s, identification=%s\n",
 				session.ID(), string(session.Identification()))
 		}))
@@ -25,7 +25,7 @@ func main() {
 		panic(err)
 	}
 
-	wire.Mount("info", func(ctx context.Context, stream wirenet.Stream) {
+	wire.Stream("info", func(ctx context.Context, stream wirenet.Stream) {
 		for !stream.IsClosed() {
 			time.Sleep(time.Second)
 			writer := stream.Writer()

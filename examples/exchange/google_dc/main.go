@@ -18,7 +18,7 @@ type Quote struct {
 
 func main() {
 	addr := ":9888"
-	wire, err := wirenet.Client(addr)
+	wire, err := wirenet.Join(addr)
 	if err != nil {
 		panic(err)
 	}
@@ -27,7 +27,7 @@ func main() {
 		time.Sleep(time.Second)
 	}
 
-	wire.Mount("google:quotes", func(ctx context.Context, stream wirenet.Stream) {
+	wire.Stream("google:quotes", func(ctx context.Context, stream wirenet.Stream) {
 		writer := stream.Writer()
 		for {
 			wait()

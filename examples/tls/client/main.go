@@ -14,7 +14,7 @@ func main() {
 	}
 
 	session := make(chan wirenet.Session)
-	wire, err := wirenet.Client(":9076", opts(session, tlsConf)...)
+	wire, err := wirenet.Join(":9076", opts(session, tlsConf)...)
 	if err != nil {
 		panic(err)
 	}
@@ -38,7 +38,7 @@ func opts(connCh chan wirenet.Session, tlsConf *tls.Config) []wirenet.Option {
 	return []wirenet.Option{
 		wirenet.WithTLS(tlsConf),
 		wirenet.WithIdentification(wirenet.Identification("client"), nil),
-		wirenet.WithOpenSessionHook(func(session wirenet.Session) {
+		wirenet.WithSessionCloseHook(func(session wirenet.Session) {
 			connCh <- session
 			close(connCh)
 		}),
