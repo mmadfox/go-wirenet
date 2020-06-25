@@ -1,138 +1,169 @@
 # go-wirenet
-Simple bidirectional TCP server.
+Simple bidirectional stream server.
 
 ## Table of contents
 - [Installation](#installation)
 - [Examples](#examples)
-    + [Creating connection server side](#creating-connection-server-side)
-    + [Creating connection client side](#creating-connection-client-side)
-    + [Stream handling client or server side](#stream-handling-client-or-server-side)
-    + [Writing payload one session](#writing-payload-one-session)
-    + [Writing multi-payload one session](#writing-multi-payload-one-session)  
-    + [Read from stream (Recommended)](#read-from-stream)
-    + [Write to stream (Recommended)](#write-to-stream)
-    + [Reading payload ](#reading-payload)
-    + [Invoke stream from client or server side](#invoke-stream-from-client-or-server-side)
-
+    + [Creating connection](#creating-connection)
+    + [Stream handling](#stream-handling)
+    + [Stream opening](#stream-opening)
+    + [Writing to stream](#writing-to-stream)
+    + [Reading from stream](#reading-from-stream)
+     
 ### Installation
 ```ssh
 go get github.com/mediabuyerbot/go-wirenet
 ```
 
 ### Examples
-##### Creating connection server side
+##### Creating connection 
 ```go
 import "github.com/mediabuyerbot/go-wirenet"
 
+// server side
 wire, err := wirenet.Mount(":8989", nil)
 if err != nil {
-    panic(err)
+    handleError(err)
 }
 if err := wire.Connect(); err != nil {
-    panic(err)
+    handleError(err)
+}
+
+// client side 
+wire, err := wirenet.Join(":8989", nil)
+if err != nil {
+    handleError(err)
+}
+
+if err := wire.Connect(); err != nil {
+    handleError(err)
 }
 ```
 
-##### Creating connection client side
+##### Stream handling 
 ```go
 import "github.com/mediabuyerbot/go-wirenet"
 
+// server side
+wire, err := wirenet.Mount(":8989", nil)
+if err != nil {
+    handleError(err)
+}
+// or client side
 wire, err := wirenet.Join(":8989", nil)
 if err != nil {
-    panic(err)
+    handleError(err)
 }
+
+backupStream := func(ctx context.Context, stream wirenet.Stream) {
+    file, err := os.Open("/backup.log")
+    ...
+    // write to stream
+    n, err := stream.ReadFrom(file)
+    ...
+    stream.Close()
+}
+
+openChromeStream := func(ctx context.Context, stream wirenet.Stream) {
+      // read from stream
+      n, err := stream.WriteTo(os.Stdout)
+} 
+
+wire.Stream("backup", backupStream)
+wire.Stream("openChrome", openChromeStream)
+
 if err := wire.Connect(); err != nil {
-	panic(err)
+    handleError(err)
 }
 ```
 
-##### Stream handling client or server side
+##### Stream opening 
 ```go
-wire.Stream("streamName", func(ctx context.Context, stream wirenet.Stream) {
-    // ,,,  
-})
+// make options
+opts := []wirenet.Option{
+   wirenet.WithSessionOpenHook(func(session wirenet.Session) {
+   		     hub.registerSession(session)	
+   		}),
+   		wirenet.WithSessionCloseHook(func(session wirenet.Session) {
+               hub.unregisterSession(session)
+        }),
+}
+// make client side
+wire, err := wirenet.Join(":8989", opts...)
+// OR make server side
+wire, err := wirenet.Mount(":8989", opts...)
+
+...
+
+// find an open session in some repository
+sess := hub.findSession("sessionID")
+stream, err := sess.OpenStream("backup")
+if err != nil {
+   handleError(err)
+}
+defer stream.Close()
+ 
+backup, err := os.Open("/backup.log")
+...
+
+// write to stream
+n, err := stream.ReadFrom(backup)
+...
 ```
 
-##### Writing payload one session
+##### Writing to stream 
 ```go
-wire.Stream("streamName", func(ctx context.Context, stream wirenet.Stream) {
+wire.Stream("account.set", func(ctx context.Context, stream wirenet.Stream) {
+   // write to stream using writer 
    writer := stream.Writer()
-   for i := 0; i < 100; i++ {
-       writer.Write([]byte("some payload"))
+   for {
+      n, err := fileOne.Read(buf)
+      if err != nil {
+          handleError(err)
+          break
+      }
+   	  n, err := writer.Write(buf[:n])
+      ...
    }
+   // EOF frame
    writer.Close()
+   
+   for {
+         n, err := fileTwo.Read(buf)
+         if err != nil {
+             handleError(err)
+             break
+         }
+      	  n, err := writer.Write(buf[:n])
+         ...
+      }
+      // EOF frame
+      writer.Close() 
+   ...
+
+   // or write to stream (recommended) 
+   n, err := stream.ReadFrom(fileOne)
+   ...
+   n, err := stream.ReadFrom(fileTwo)
 })
 ```
 
-##### Writing multi-payload one session
+##### Reading from stream 
 ```go
-wire.Stream("streamName", func(ctx context.Context, stream wirenet.Stream) {
-   writer := stream.Writer()
-   for i := 0; i < 100; i++ {
-   	    writer.Write([]byte("one payload"))
-   }
-   writer.Close()
-   for i := 0; i < 100; i++ {
-   	    writer.Write([]byte("two payload"))
-   }
-   writer.Close()
-})
-```
-
-##### Read from stream
-```go
-wire.Stream("streamName", func(ctx context.Context, stream wirenet.Stream) {
-	n, err := stream.ReadFrom(os.Stdout)
-    ...
-})
-```
-
-##### Write to stream
-```go
-wire.Stream("streamName", func(ctx context.Context, stream wirenet.Stream) {
-    n, err := stream.WriteTo(os.Stdout) 
-    ...
-})
-```
-
-##### Reading payload 
-```go
-wire.Stream("streamName", func(ctx context.Context, stream wirenet.Stream) {
+wire.Stream("account.set", func(ctx context.Context, stream wirenet.Stream) {
+   // reading from stream using reader 
    reader := stream.Reader()
    buf := make([]byte, wirenet.BufSize)
-   for {
-      n, err := reader.Read(buf)
-      if err != nil {
-      	  break
-      } 
-   }
-   reader.Close() 
+   n, err := reader.Read(buf)
+   // EOF frame
+   reader.Close()
+   ...
+
+   // or reader from stream (recommended)  
+   n, err := stream.WriteTo(file)
+   ...
 })
 ```
-
-##### Invoke stream from client or server side
-```go
-wire, err := wirenet.Join(":8989",
-		wirenet.WithSessionOpenHook(func(session wirenet.Session) {
-		     hub.registerSession(session)	
-		}),
-        wirenet.WithSessionCloseHook(func(session wirenet.Session) {
-            hub.unregisterSession(session)
-        }),
-)
-...
-
-sess := hub.findSession("sessionID")
-stream, err := sess.OpenStream("streamName")
-if err != nil {
-   panic(err)
-}
-defer stream.Close() 
-
-n, err := stream.ReadFrom(os.Stdin)
-...
-```
-
 
 
 
