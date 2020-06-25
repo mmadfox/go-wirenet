@@ -246,10 +246,10 @@ if err := wire.Connect(); err != nil {
 #### Options
 ```go
 wirenet.WithConnectHook(hook func(io.Closer)) Option
-wirenet.WithSessionOpenHook(hook SessionHook) Option
-wirenet.WithSessionCloseHook(hook SessionHook) Option
-wirenet.WithIdentification(id Identification, token Token) Option
-wirenet.WithTokenValidator(v TokenValidator) Option                   // server side
+wirenet.WithSessionOpenHook(hook wirenet.SessionHook) Option
+wirenet.WithSessionCloseHook(hook wirenet.SessionHook) Option
+wirenet.WithIdentification(id wirenet.Identification, token wirenet.Token) Option
+wirenet.WithTokenValidator(v wirenet.TokenValidator) Option                   // server side
 wirenet.WithTLS(conf *tls.Config) Option
 wirenet.WithRetryWait(min, max time.Duration) Option
 wirenet.WithRetryMax(n int) Option
