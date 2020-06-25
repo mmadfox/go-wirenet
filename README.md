@@ -9,6 +9,8 @@ Simple bidirectional stream server.
     + [Stream opening](#stream-opening)
     + [Writing to stream](#writing-to-stream)
     + [Reading from stream](#reading-from-stream)
+    + [Using authentication](#auth)
+    + [Using SSL/TLS certs](#ssltls)
      
 ### Installation
 ```ssh
@@ -20,7 +22,7 @@ go get github.com/mediabuyerbot/go-wirenet
 ```go
 import "github.com/mediabuyerbot/go-wirenet"
 
-// server side
+// make server side
 wire, err := wirenet.Mount(":8989", nil)
 if err != nil {
     handleError(err)
@@ -29,12 +31,13 @@ if err := wire.Connect(); err != nil {
     handleError(err)
 }
 
-// client side 
+// OR make client side 
 wire, err := wirenet.Join(":8989", nil)
 if err != nil {
     handleError(err)
 }
 
+// connection
 if err := wire.Connect(); err != nil {
     handleError(err)
 }
@@ -85,7 +88,7 @@ opts := []wirenet.Option{
    		     hub.registerSession(session)	
    		}),
    		wirenet.WithSessionCloseHook(func(session wirenet.Session) {
-               hub.unregisterSession(session)
+   			 hub.unregisterSession(session)
         }),
 }
 // make client side
@@ -104,7 +107,10 @@ if err != nil {
 defer stream.Close()
  
 backup, err := os.Open("/backup.log")
-...
+if err != nil {
+   handleError(err)
+}
+defer backup.Close()
 
 // write to stream
 n, err := stream.ReadFrom(backup)
@@ -163,6 +169,77 @@ wire.Stream("account.set", func(ctx context.Context, stream wirenet.Stream) {
    n, err := stream.WriteTo(file)
    ...
 })
+```
+
+##### Auth
+server
+```go
+tokenValidator := func(streamName string, id wirenet.Identification, token wirenet.Token) error {
+   if streamName == "public" {
+      return nil 
+   }
+   if err := tokenValidate(token); err != nil {
+      return err 
+   }
+   return nil
+}
+
+wire, err := wirenet.Mount(":8989", wirenet.WithTokenValidator(tokenValidator))
+go func() {
+	if err := wire.Connect(); err != nil {
+	   handleError(err)
+    }
+}()
+
+<-terminate()
+wire.Close()
+```
+
+client
+```go
+ token := wirenet.Token("token")
+ identification := wirenet.Identification("uuid")
+ wire, err := wirenet.Join(":8989",
+ 		wirenet.WithIdentification(identification, token),
+ )
+ if err := wire.Connect(); err != nil {
+    handleError(err)
+ }
+```
+
+##### SSL/TLS
+server
+```go
+// make keys 
+// ./certs/server.key
+// ./certs/server.pem
+tlsConf, err := wirenet.LoadCertificates("server", "./certs")
+if err != nil {
+	handleError(err)
+}
+wire, err := wirenet.Mount(":8989", wirenet.WithTLS(tlsConf))
+go func() {
+	if err := wire.Connect(); err != nil {
+	   handleError(err)
+    }
+}()
+
+<-terminate()
+wire.Close()
+```
+client
+```go
+// make keys 
+// ./certs/client.key
+// ./certs/client.pem
+tlsConf, err := wirenet.LoadCertificates("client", "./certs")
+if err != nil {
+	handleError(err)
+}
+wire, err := wirenet.Mount(":8989", wirenet.WithTLS(tlsConf))
+if err := wire.Connect(); err != nil {
+    handleError(err)
+}
 ```
 
 
