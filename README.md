@@ -18,7 +18,7 @@ go get github.com/mediabuyerbot/go-wirenet
 ```
 
 ### Examples
-##### Creating connection 
+#### Creating connection 
 ```go
 import "github.com/mediabuyerbot/go-wirenet"
 
@@ -43,7 +43,7 @@ if err := wire.Connect(); err != nil {
 }
 ```
 
-##### Stream handling 
+#### Stream handling 
 ```go
 import "github.com/mediabuyerbot/go-wirenet"
 
@@ -80,7 +80,7 @@ if err := wire.Connect(); err != nil {
 }
 ```
 
-##### Stream opening 
+#### Stream opening 
 ```go
 // make options
 opts := []wirenet.Option{
@@ -117,7 +117,7 @@ n, err := stream.ReadFrom(backup)
 ...
 ```
 
-##### Writing to stream 
+#### Writing to stream 
 ```go
 wire.Stream("account.set", func(ctx context.Context, stream wirenet.Stream) {
    // write to stream using writer 
@@ -154,7 +154,7 @@ wire.Stream("account.set", func(ctx context.Context, stream wirenet.Stream) {
 })
 ```
 
-##### Reading from stream 
+#### Reading from stream 
 ```go
 wire.Stream("account.set", func(ctx context.Context, stream wirenet.Stream) {
    // reading from stream using reader 
@@ -171,7 +171,7 @@ wire.Stream("account.set", func(ctx context.Context, stream wirenet.Stream) {
 })
 ```
 
-##### Auth
+#### Using authentication
 server
 ```go
 tokenValidator := func(streamName string, id wirenet.Identification, token wirenet.Token) error {
@@ -207,7 +207,7 @@ client
  }
 ```
 
-##### SSL/TLS
+#### Using SSL/TLS certs
 server
 ```go
 // make keys 
