@@ -9,8 +9,9 @@ Simple bidirectional stream server.
     + [Stream opening](#stream-opening)
     + [Writing to stream](#writing-to-stream)
     + [Reading from stream](#reading-from-stream)
-    + [Using authentication](#auth)
-    + [Using SSL/TLS certs](#ssltls)
+    + [Using authentication](#using-authentication)
+    + [Using SSL/TLS certs](#using-ssltls-certs)
+- [Options](#options)    
      
 ### Installation
 ```ssh
@@ -241,6 +242,21 @@ if err := wire.Connect(); err != nil {
     handleError(err)
 }
 ```
+
+#### Options
+```go
+wirenet.WithConnectHook(hook func(io.Closer)) Option
+wirenet.WithSessionOpenHook(hook SessionHook) Option
+wirenet.WithSessionCloseHook(hook SessionHook) Option
+wirenet.WithIdentification(id Identification, token Token) Option
+wirenet.WithTokenValidator(v TokenValidator) Option                   // server side
+wirenet.WithTLS(conf *tls.Config) Option
+wirenet.WithRetryWait(min, max time.Duration) Option
+wirenet.WithRetryMax(n int) Option
+wirenet.WithReadWriteTimeouts(read, write time.Duration) Option
+wirenet.WithSessionCloseTimeout(dur time.Duration) Option
+```
+
 
 
 
