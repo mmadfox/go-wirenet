@@ -1,5 +1,10 @@
 # go-wirenet
 Simple  bidirectional TCP stream server.
+---
+[![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs]
+
+[godocs]: https://godoc.org/github.com/mediabuyerbot/go-wirenet 
+
 
 ## Table of contents
 - [Installation](#installation)
