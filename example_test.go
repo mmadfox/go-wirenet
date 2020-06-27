@@ -13,7 +13,7 @@ import (
 	"github.com/mediabuyerbot/go-wirenet"
 )
 
-func ExampleCallFromClient() {
+func ExampleWireCallFromClient() {
 	addr := fmt.Sprintf("127.0.0.1:%d", randomPort())
 	serverIsOk := make(chan struct{})
 	go func() {
@@ -80,7 +80,7 @@ func ExampleCallFromClient() {
 	// Output: OK
 }
 
-func ExampleCallFromServer() {
+func ExampleWireCallFromServer() {
 	addr := fmt.Sprintf("127.0.0.1:%d", randomPort())
 	serverIsOk := make(chan struct{})
 	totalStreams := 10
