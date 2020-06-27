@@ -1,8 +1,9 @@
 # go-wirenet
-Simple bidirectional stream server.
+Simple  bidirectional TCP stream server.
 
 ## Table of contents
 - [Installation](#installation)
+- [Sequence](#sequence)
 - [Examples](#examples)
     + [Creating connection](#creating-connection)
     + [Stream handling](#stream-handling)
@@ -16,6 +17,14 @@ Simple bidirectional stream server.
 ### Installation
 ```ssh
 go get github.com/mediabuyerbot/go-wirenet
+```
+
+### Sequence
+```
+client join  ----------------> server mount
+client conn ok  <------------> server conn ok
+client handler <-------------> call from server
+call from client <-----------> server handler
 ```
 
 ### Examples

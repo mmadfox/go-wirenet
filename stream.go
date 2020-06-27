@@ -16,13 +16,29 @@ const (
 	eof     = uint32(0)
 )
 
+// Stream is a named stream for streaming data.
+// The size of the transmitted data is unlimited since the transfer is carried out in chunks.
+// Default chunk size is 1024 bytes.
 type Stream interface {
+
+	// ID returns an unique stream id.
 	ID() uuid.UUID
+
+	// Session returns the instance of the session to which the stream.
 	Session() Session
+
+	// Name returns a name of stream.
 	Name() string
+
+	// IsClosed returns a true flag if the stream is closed, otherwise returns a false flag.
 	IsClosed() bool
+
+	// Reader returns a reader.
 	Reader() io.ReadCloser
+
+	// Writer returns a writer.
 	Writer() io.WriteCloser
+
 	io.Closer
 	io.ReaderFrom
 	io.WriterTo

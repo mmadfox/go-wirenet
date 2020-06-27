@@ -11,13 +11,31 @@ import (
 	"github.com/hashicorp/yamux"
 )
 
+// Session represents a connection between a client and a server.
+// Each session can have from one to N named streams.
+// Each named stream is a payload processing (file transfer, video transfer, etc.).
 type Session interface {
+
+	// ID returns an unique session id.
 	ID() uuid.UUID
+
+	// IsClosed returns a true flag if the session is closed, otherwise returns a false flag.
 	IsClosed() bool
+
+	// Close closes gracefully shutdown the all active streams.
 	Close() error
+
+	// StreamNames returns a list of open stream names.
 	StreamNames() []string
+
+	// OpenStream opens a named stream and returns it.
+	// After the named stream is successfully opened, an authentication frame is sent.
 	OpenStream(name string) (Stream, error)
+
+	// Identification returns some information specified by the user on the client side using WithIdentification().
 	Identification() Identification
+
+	// CloseWire closes gracefully shutdown the server without interrupting any active connections.
 	CloseWire() error
 }
 

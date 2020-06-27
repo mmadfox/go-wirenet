@@ -20,25 +20,66 @@ import (
 )
 
 type (
-	SessionHook    func(Session)
-	RetryPolicy    func(min, max time.Duration, attemptNum int) time.Duration
-	Handler        func(context.Context, Stream)
-	Sessions       map[uuid.UUID]Session
+	// SessionHook is used when opening or closing a session.
+	// To set the hooks, the WithSessionOpenHook and WithSessionCloseHook options are use.
+	// Each session hook is running in goroutine.
+	SessionHook func(Session)
+
+	// RetryPolicy retry policy is used when there is no connection to the server.
+	// Used only on the client side.
+	// The default is DefaultRetryPolicy, but you can write your own policy.
+	RetryPolicy func(min, max time.Duration, attemptNum int) time.Duration
+
+	// Handler is used to handle payload in a named stream. See Wire.Stream(name, Handler).
+	Handler func(context.Context, Stream)
+
+	// Sessions represents a map of active sessions.
+	// The key is session id and session is value.
+	Sessions map[uuid.UUID]Session
+
+	// TokenValidator used to validate the token if the token is set on the client side with WithIdentification().
+	// Token and identifier can be any sequence of bytes.
 	TokenValidator func(streamName string, id Identification, token Token) error
 )
 
+// Wire is used to initialize a server or client side connection.
+// Join()  initializes the wire as the client side.
+// Mount() or Hub() initializes the wire as the server side.
+// A wire may have one or more connections (sessions).
+// Each session can have from one to N named streams.
+// Each named stream is a payload processing (file transfer, video transfer, etc.).
+// Streams open like files and should be closed after work.
+// The API and processing a named stream is the same as on the server or client side.
+// The difference between the client and server is only in the number of sessions.
+// On the client side, this is one session, and on the server or hub side, from one to N sessions.
+// Useful for NAT traversal.
 type Wire interface {
+
+	// Sessions returns a list of active sessions.
 	Sessions() Sessions
+
+	// Session returns the session by UUID.
 	Session(sessionID uuid.UUID) (Session, error)
+
+	// Stream registers the handler for the given name.
+	// If a named stream already exists, stream overwrite.
 	Stream(name string, h Handler)
+
+	// Close gracefully shutdown the server without interrupting any active connections.
 	Close() error
+
+	// Connect creates a new connection.
+	// If the wire is on the client-side, then used dial().
+	// If the wire is on the server-side, then used listener().
 	Connect() error
 }
 
+// Mount constructs a new Wire with the given addr and Options as the server side.
 func Mount(addr string, opts ...Option) (Wire, error) {
 	return newWire(addr, serverSide, opts...)
 }
 
+// Hub constructs a new Wire with the given addr and Options as the server side.
 func Hub(addr string, opts ...Option) (Wire, error) {
 	opts = append(opts, func(wire *wire) {
 		wire.hubMode = true
@@ -46,6 +87,7 @@ func Hub(addr string, opts ...Option) (Wire, error) {
 	return newWire(addr, serverSide, opts...)
 }
 
+// Join constructs a new Wire with the given addr and Options as the client side.
 func Join(addr string, opts ...Option) (Wire, error) {
 	return newWire(addr, clientSide, opts...)
 }
@@ -186,7 +228,9 @@ func (w *wire) Connect() (err error) {
 }
 
 func (w *wire) Stream(name string, h Handler) {
+	w.mu.Lock()
 	w.handlers[name] = h
+	w.mu.Unlock()
 }
 
 func (w *wire) isClosed() bool {
