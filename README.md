@@ -1,5 +1,5 @@
 # go-wirenet
-Simple  bidirectional TCP stream server.
+Simple  bidirectional TCP stream server. Useful for NAT traversal.
 ---
 [![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs]
 
@@ -26,10 +26,10 @@ go get github.com/mediabuyerbot/go-wirenet
 
 ### Sequence
 ```
-client join  ----------------> server mount
-client conn ok  <------------> server conn ok
-client handler <-------------> call from server
-call from client <-----------> server handler
+client join  --------NAT------> server mount
+client conn ok <--------------> server conn ok
+client handler <--------------> call from server
+call from client <------------> server handler
 ```
 
 ### Examples
