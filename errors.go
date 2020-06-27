@@ -9,6 +9,9 @@ var (
 	// ErrStreamClosed is returned when named stream is closed.
 	ErrStreamClosed = errors.New("wirenet: read/write on closed stream")
 
+	// ErrStreamHandlerNotFound is returned when stream handler not found.
+	ErrStreamHandlerNotFound = errors.New("wirenet: stream handler not found")
+
 	// ErrSessionNotFound is returned when session not found.
 	ErrSessionNotFound = errors.New("wirenet: session not found")
 

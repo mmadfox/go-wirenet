@@ -31,6 +31,12 @@ func WithConnectHook(hook func(io.Closer)) Option {
 	}
 }
 
+func WithErrorHandler(h ErrorHandler) Option {
+	return func(w *wire) {
+		w.errorHandler = h
+	}
+}
+
 func WithSessionOpenHook(hook SessionHook) Option {
 	return func(w *wire) {
 		w.openSessHook = hook

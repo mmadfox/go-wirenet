@@ -25,6 +25,9 @@ type (
 	// Each session hook is running in goroutine.
 	SessionHook func(Session)
 
+	// ErrorHandler is used for error logging.
+	ErrorHandler func(context.Context, error)
+
 	// RetryPolicy retry policy is used when there is no connection to the server.
 	// Used only on the client side.
 	// The default is DefaultRetryPolicy, but you can write your own policy.
@@ -153,8 +156,9 @@ type wire struct {
 
 	tlsConfig *tls.Config
 
-	handlers map[string]Handler
-	mu       sync.RWMutex
+	handlers     map[string]Handler
+	errorHandler ErrorHandler
+	mu           sync.RWMutex
 }
 
 func newWire(addr string, role role, opts ...Option) (Wire, error) {
@@ -162,8 +166,9 @@ func newWire(addr string, role role, opts ...Option) (Wire, error) {
 		return nil, ErrAddrEmpty
 	}
 	wire := &wire{
-		addr:     addr,
-		handlers: make(map[string]Handler),
+		addr:         addr,
+		handlers:     make(map[string]Handler),
+		errorHandler: func(ctx context.Context, err error) {},
 
 		readTimeout:      DefaultReadTimeout,
 		writeTimeout:     DefaultWriteTimeout,
@@ -243,6 +248,16 @@ func (w *wire) isHubMode() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.hubMode
+}
+
+func (w *wire) findHandler(name string) (Handler, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	h, ok := w.handlers[name]
+	if !ok {
+		return nil, ErrStreamHandlerNotFound
+	}
+	return h, nil
 }
 
 func (w *wire) findSession(name string) (Session, error) {

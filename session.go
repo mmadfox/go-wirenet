@@ -164,44 +164,81 @@ func (s *session) dispatchStream(ctx context.Context, conn *yamux.Stream) {
 
 	frm, err := s.verifyToken(conn)
 	if err != nil {
+		s.w.errorHandler(
+			ctx,
+			fmt.Errorf("token validation error session %s, identificator %v, remoteAddr %s, localAddr %s, %v",
+				s.id, s.identification, s.conn.RemoteAddr(), s.conn.LocalAddr(), err))
 		return
 	}
 
 	conn.Shrink()
+
 	streamName := frm.Command()
 	if len(streamName) == 0 {
+		s.w.errorHandler(
+			ctx,
+			fmt.Errorf("stream name required session %s, identificator %v, remoteAddr %s, localAddr %s",
+				s.id, s.identification, s.conn.RemoteAddr(), s.conn.LocalAddr()),
+		)
 		return
 	}
 
-	if s.w.isHubMode() && !s.w.role.IsClientSide() {
-		sess, err := s.w.findSession(streamName)
-		if err == nil {
-			dst, err := sess.OpenStream(streamName)
-			if err != nil {
-				return
-			}
-			dstConn := dst.(*stream).conn
-			go func() {
-				if err := pipe(dstConn, conn); err != nil {
-				}
-			}()
-			if err := pipe(conn, dstConn); err != nil {
-			}
-			conn.Close()
-			dst.Close()
-			return
+	isHubMode := s.w.isHubMode() && !s.w.role.IsClientSide()
+	if isHubMode {
+		err = s.serveHub(ctx, streamName, conn)
+		if err == ErrSessionNotFound {
+			err = s.serve(ctx, streamName, conn)
 		}
+	} else {
+		err = s.serve(ctx, streamName, conn)
 	}
 
-	handler, ok := s.w.handlers[streamName]
-	if !ok {
-		return
+	if err != nil {
+		s.w.errorHandler(
+			ctx,
+			fmt.Errorf("handler error session %s, identificator %v, remoteAddr %s, localAddr %s, %v",
+				s.id, s.identification, s.conn.RemoteAddr(), s.conn.LocalAddr(), err),
+		)
+	}
+}
+
+func (s *session) serveHub(_ context.Context, streamName string, conn *yamux.Stream) error {
+	sess, err := s.w.findSession(streamName)
+	if err != nil {
+		return err
+	}
+	dst, err := sess.OpenStream(streamName)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		conn.Close()
+		dst.Close()
+	}()
+	dstConn := dst.(*stream).conn
+	go func() {
+		_ = pipe(dstConn, conn)
+	}()
+	return pipe(conn, dstConn)
+}
+
+func (s *session) serve(ctx context.Context, streamName string, conn *yamux.Stream) error {
+	defer func() {
+		if err := recover(); err != nil {
+			s.w.errorHandler(ctx, fmt.Errorf("handler recover session %s, identificator %v, remoteAddr %s, localAddr %s, %v",
+				s.id, s.identification, s.conn.RemoteAddr(), s.conn.LocalAddr(), err))
+		}
+	}()
+	handler, err := s.w.findHandler(streamName)
+	if err != nil {
+		return err
 	}
 	stream := openStream(s, streamName, conn)
 	handler(ctx, stream)
 	if !stream.IsClosed() {
 		_ = stream.Close()
 	}
+	return nil
 }
 
 func (s *session) open() {
