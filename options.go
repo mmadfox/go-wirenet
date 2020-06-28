@@ -114,6 +114,12 @@ func WithSessionCloseTimeout(dur time.Duration) Option {
 	}
 }
 
+func WithRetryPolicy(rp RetryPolicy) Option {
+	return func(w *wire) {
+		w.retryPolicy = rp
+	}
+}
+
 func DefaultRetryPolicy(min, max time.Duration, attemptNum int) time.Duration {
 	m := math.Pow(2, float64(attemptNum)) * float64(min)
 	wait := time.Duration(m)

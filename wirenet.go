@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,9 +21,8 @@ import (
 )
 
 type (
-	// SessionHook is used when opening or closing a session.
-	// To set the hooks, the WithSessionOpenHook and WithSessionCloseHook options are use.
-	// Each session hook is running in goroutine.
+	// SessionHook is used when opening or closing a session, and each session interception
+	// is performed in a separate goroutine.
 	SessionHook func(Session)
 
 	// ErrorHandler is used for error logging.
@@ -33,7 +33,7 @@ type (
 	// The default is DefaultRetryPolicy, but you can write your own policy.
 	RetryPolicy func(min, max time.Duration, attemptNum int) time.Duration
 
-	// Handler is used to handle payload in a named stream. See Wire.Stream(name, Handler).
+	// Handler is used to handle payload in a named stream.
 	Handler func(context.Context, Stream)
 
 	// Sessions represents a map of active sessions.
@@ -46,16 +46,6 @@ type (
 )
 
 // Wire is used to initialize a server or client side connection.
-// Join()  initializes the wire as the client side.
-// Mount() or Hub() initializes the wire as the server side.
-// A wire may have one or more connections (sessions).
-// Each session can have from one to N named streams.
-// Each named stream is a payload processing (file transfer, video transfer, etc.).
-// Streams open like files and should be closed after work.
-// The API and processing a named stream is the same as on the server or client side.
-// The difference between the client and server is only in the number of sessions.
-// On the client side, this is one session, and on the server or hub side, from one to N sessions.
-// Useful for NAT traversal.
 type Wire interface {
 
 	// Sessions returns a list of active sessions.
@@ -77,12 +67,12 @@ type Wire interface {
 	Connect() error
 }
 
-// Mount constructs a new Wire with the given addr and Options as the server side.
+// Mount constructs a new connection point with the given addr and Options as the server side.
 func Mount(addr string, opts ...Option) (Wire, error) {
 	return newWire(addr, serverSide, opts...)
 }
 
-// Hub constructs a new Wire with the given addr and Options as the server side.
+// Hub constructs a new connection point with the given addr and Options as the server side.
 func Hub(addr string, opts ...Option) (Wire, error) {
 	opts = append(opts, func(wire *wire) {
 		wire.hubMode = true
@@ -90,7 +80,7 @@ func Hub(addr string, opts ...Option) (Wire, error) {
 	return newWire(addr, serverSide, opts...)
 }
 
-// Join constructs a new Wire with the given addr and Options as the client side.
+// Join constructs a new connection point with the given addr and Options as the client side.
 func Join(addr string, opts ...Option) (Wire, error) {
 	return newWire(addr, clientSide, opts...)
 }
@@ -199,7 +189,7 @@ func newWire(addr string, role role, opts ...Option) (Wire, error) {
 	}
 	for _, opt := range opts {
 		if opt == nil {
-			break
+			continue
 		}
 		opt(wire)
 	}
@@ -321,6 +311,7 @@ func (w *wire) acceptClient() (err error) {
 		w.setConnFlag(false)
 		c.Close()
 	}
+
 	for {
 		attemptNum := w.connCounter
 		if attemptNum >= w.retryMax || w.isClosed() {
@@ -330,8 +321,13 @@ func (w *wire) acceptClient() (err error) {
 		w.connCounter++
 		w.setConnFlag(false)
 
-		conn, err := w.dial()
-		if err != nil {
+		conn, dialErr := w.dial()
+		if dialErr != nil {
+			err = dialErr
+			if isNotConnErr(dialErr) {
+				break
+			}
+
 			retryWait := w.retryPolicy(
 				w.retryWaitMin,
 				w.retryWaitMax,
@@ -342,7 +338,7 @@ func (w *wire) acceptClient() (err error) {
 				if (timeout.Unix() <= time.Now().Unix()) || w.isClosed() {
 					break
 				}
-				time.Sleep(time.Second)
+				time.Sleep(500 * time.Millisecond)
 			}
 			continue
 		}
@@ -366,9 +362,9 @@ func (w *wire) acceptClient() (err error) {
 		w.closeCh = make(chan chan *ShutdownError)
 
 		go w.shutdown(wrapConn)
-		go w.onConnect(w)
 
 		openSession(sid, w.identification, wrapConn, w, remoteStreamNames)
+		go w.onConnect(w)
 
 		<-w.waitCh
 	}
@@ -619,4 +615,8 @@ func openSessionRequest(conn *yamux.Stream, sessID []byte, token Token, id Ident
 		return nil, errors.New(resp.Err)
 	}
 	return resp.RemoteStreamNames, nil
+}
+
+func isNotConnErr(err error) bool {
+	return !strings.Contains(err.Error(), "connection refused")
 }
