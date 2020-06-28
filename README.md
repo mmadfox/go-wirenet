@@ -6,6 +6,8 @@ Simple  bidirectional TCP stream server. Useful for NAT traversal.
 
 [godocs]: https://godoc.org/github.com/mediabuyerbot/go-wirenet 
 
+![Design](assets/design.jpg)
+
 ## Table of contents
 - [Installation](#installation)
 - [Examples](#examples)
@@ -26,6 +28,7 @@ go get github.com/mediabuyerbot/go-wirenet
 ```
 
 ### Overview
+
 ```
 // client <-> server
 client join  --------NAT------> server mount
