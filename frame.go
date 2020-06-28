@@ -182,7 +182,7 @@ func recvFrame(rw io.ReadWriter, fn func(frame) error) (frm frame, err error) {
 
 	if fn != nil {
 		if checkErr := fn(frm); checkErr != nil {
-			frameTyp = permFrameTyp
+			frameTyp = errFrameTyp
 			frameErr = []byte(checkErr.Error())
 			err = checkErr
 		}

@@ -3,6 +3,9 @@ package wirenet
 import (
 	"bytes"
 	"errors"
+	"net"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -28,9 +31,41 @@ var (
 	ErrUnknownCertificateName = errors.New("wirenet: unknown certificate name")
 )
 
-// ShutdownError represent a container with errors.
-// The container is used when closing the wire.
-// If an error occurs during the sessions closing process, it is register to the container.
+type OpError struct {
+	Op             string
+	SessionID      uuid.UUID
+	LocalAddr      net.Addr
+	RemoteAddr     net.Addr
+	Identification Identification
+	Err            error
+}
+
+func (e *OpError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+	s := e.Op
+	s = s + " sid-" + e.SessionID.String()
+	if len(e.Identification) > 0 {
+		s = s + " id-" + string(e.Identification)
+	}
+	if e.LocalAddr != nil {
+		s += " " + e.LocalAddr.String()
+	}
+	if e.RemoteAddr != nil {
+		if e.RemoteAddr != nil {
+			s += "->"
+		} else {
+			s += " "
+		}
+		s += e.RemoteAddr.String()
+	}
+	s += ": " + e.Err.Error()
+	return s
+}
+
+// ShutdownError is the error type with errors that occurred when closing a sessions.
+// The error is used only when closing a wired connection.
 type ShutdownError struct {
 	Errors []error
 }

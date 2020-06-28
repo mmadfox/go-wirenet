@@ -144,17 +144,49 @@ func (s *session) shutdown() context.Context {
 	return ctx
 }
 
-func (s *session) verifyToken(conn *yamux.Stream) (frm frame, err error) {
-	frm, err = recvFrame(conn, func(f frame) error {
-		if s.w.verifyToken == nil {
-			return nil
+func (s *session) validateStreamName(streamName string) (err error) {
+	isHubMode := s.w.isHubMode() && !s.w.role.IsClientSide()
+	if isHubMode {
+		_, err = s.w.findSession(streamName)
+		if err == ErrSessionNotFound {
+			_, err = s.w.findHandler(streamName)
 		}
-		return s.w.verifyToken(f.Command(), s.identification, f.Payload())
-	})
-	if err != nil {
-		return nil, err
+	} else {
+		_, err = s.w.findHandler(streamName)
 	}
-	return frm, nil
+	return err
+}
+
+func (s *session) validateToken(streamName string, token []byte) (err error) {
+	if s.w.verifyToken != nil {
+		if err := s.w.verifyToken(streamName, s.identification, token); err != nil {
+			return err
+		}
+	}
+	return
+}
+
+func (s *session) readFrame(conn *yamux.Stream) (frm frame, err error) {
+	frm, err = recvFrame(conn, func(f frame) error {
+		command := f.Command()
+		if err := s.validateToken(command, f.Payload()); err != nil {
+			return err
+		}
+		return s.validateStreamName(command)
+	})
+	return frm, err
+}
+
+func (s *session) errLog(ctx context.Context, err error, op string) {
+	opErr := &OpError{
+		Op:             op,
+		Err:            err,
+		SessionID:      s.id,
+		Identification: s.identification,
+		RemoteAddr:     s.conn.RemoteAddr(),
+		LocalAddr:      s.conn.LocalAddr(),
+	}
+	s.w.errorHandler(ctx, opErr)
 }
 
 func (s *session) dispatchStream(ctx context.Context, conn *yamux.Stream) {
@@ -162,43 +194,27 @@ func (s *session) dispatchStream(ctx context.Context, conn *yamux.Stream) {
 		_ = conn.Close()
 	}()
 
-	frm, err := s.verifyToken(conn)
+	frm, err := s.readFrame(conn)
 	if err != nil {
-		s.w.errorHandler(
-			ctx,
-			fmt.Errorf("token validation error session %s, identificator %v, remoteAddr %s, localAddr %s, %v",
-				s.id, s.identification, s.conn.RemoteAddr(), s.conn.LocalAddr(), err))
+		s.errLog(ctx, err, "validate stream")
 		return
 	}
 
 	conn.Shrink()
 
 	streamName := frm.Command()
-	if len(streamName) == 0 {
-		s.w.errorHandler(
-			ctx,
-			fmt.Errorf("stream name required session %s, identificator %v, remoteAddr %s, localAddr %s",
-				s.id, s.identification, s.conn.RemoteAddr(), s.conn.LocalAddr()),
-		)
-		return
-	}
-
 	isHubMode := s.w.isHubMode() && !s.w.role.IsClientSide()
 	if isHubMode {
 		err = s.serveHub(ctx, streamName, conn)
 		if err == ErrSessionNotFound {
 			err = s.serve(ctx, streamName, conn)
 		}
+
 	} else {
 		err = s.serve(ctx, streamName, conn)
 	}
-
 	if err != nil {
-		s.w.errorHandler(
-			ctx,
-			fmt.Errorf("handler error session %s, identificator %v, remoteAddr %s, localAddr %s, %v",
-				s.id, s.identification, s.conn.RemoteAddr(), s.conn.LocalAddr(), err),
-		)
+		s.errLog(ctx, err, "serve stream")
 	}
 }
 
@@ -225,8 +241,7 @@ func (s *session) serveHub(_ context.Context, streamName string, conn *yamux.Str
 func (s *session) serve(ctx context.Context, streamName string, conn *yamux.Stream) error {
 	defer func() {
 		if err := recover(); err != nil {
-			s.w.errorHandler(ctx, fmt.Errorf("handler recover session %s, identificator %v, remoteAddr %s, localAddr %s, %v",
-				s.id, s.identification, s.conn.RemoteAddr(), s.conn.LocalAddr(), err))
+			s.errLog(ctx, fmt.Errorf("recover %v", err), "recover stream")
 		}
 	}()
 	handler, err := s.w.findHandler(streamName)
