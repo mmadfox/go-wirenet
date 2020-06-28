@@ -6,7 +6,42 @@ Simple  bidirectional TCP stream server. Useful for NAT traversal.
 
 [godocs]: https://godoc.org/github.com/mediabuyerbot/go-wirenet 
 
+## Design
 ![Design](assets/design.jpg)
+##### Client-Server
+```
+// client <-> server
+client1 join  to the server  ---------NAT------> server
+client2 join to the server   ---------NAT------> server
+client3 join to the server   ---------NAT------> server
+client4 join to the server   ---------NAT------> server
+
+// call from the server
+call client1 from the server ---------NAT------> client1
+call client 2 from the server --------NAT------> client2  
+call client 3 from the server --------NAT------> client3  
+call client 4 from the server --------NAT------> client4
+
+// call from the client
+call server from the client1 ---------NAT------> server
+call server from the client2 ---------NAT------> server  
+call server from the client3  --------NAT------> server  
+call server from the client4  --------NAT------> server
+```
+##### Client-Hub
+```
+// clients <-> hub
+client1 join to the hub  ---------NAT------> hub
+client2 join to the hub  ---------NAT------> hub
+client3 join to the hub  ---------NAT------> hub
+client4 join to the hub  ---------NAT------> hub
+
+// call from the client
+call client2 from the client1 ---------NAT------> client2
+call client1 from the client2 ---------NAT------> client1 
+call client2 from the client3  --------NAT------> client2  
+call client1 from the client4  --------NAT------> client1
+```
 
 ## Table of contents
 - [Installation](#installation)
@@ -26,25 +61,6 @@ Simple  bidirectional TCP stream server. Useful for NAT traversal.
 ```ssh
 go get github.com/mediabuyerbot/go-wirenet
 ```
-
-### Overview
-
-```
-// client <-> server
-client join  --------NAT------> server mount
-client conn ok <--------------> server conn ok
-client handler <--------------> call from server
-call from client <------------> server handler
-
-// clients <-> hub
-client1 join ---------NAT---------> hub
-client2 join ---------NAT---------> hub
-client3 join ---------NAT---------> hub
-call from client1 ----------------> client2 handler
-client2 handler <-----------------> call from client3
-client3 handler <-----------------> call from client1 
-```
-
 ### Examples
 #### Creating connection 
 ```go
