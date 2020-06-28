@@ -127,7 +127,7 @@ func (s *session) shutdown() context.Context {
 					}
 					continue
 				}
-				time.Sleep(time.Second)
+				time.Sleep(300 * time.Millisecond)
 			}
 
 			cancel()

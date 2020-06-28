@@ -469,13 +469,6 @@ func (w *wire) shutdown(conn io.Closer) {
 	errCh <- shutdownErr
 }
 
-func (w *wire) hasSession(s Session) bool {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	_, found := w.sessions[s.ID()]
-	return found
-}
-
 func (w *wire) registerSession(s Session) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

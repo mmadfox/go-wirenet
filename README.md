@@ -221,7 +221,7 @@ tokenValidator := func(streamName string, id wirenet.Identification, token wiren
    if streamName == "public" {
       return nil 
    }
-   if err := tokenValidate(token); err != nil {
+   if err := validate(token); err != nil {
       return err 
    }
    return nil

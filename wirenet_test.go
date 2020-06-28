@@ -75,6 +75,24 @@ func TestWire_Connect(t *testing.T) {
 	assert.Nil(t, client.Connect())
 }
 
+func TestWire_ConnectDup(t *testing.T) {
+	addr := genAddr(t)
+	conn := make(chan struct{})
+	// server side
+	server, err := Mount(addr, WithConnectHook(func(closer io.Closer) {
+		close(conn)
+	}))
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, server.Connect())
+	}()
+	<-conn
+
+	server, err = Mount(addr)
+	assert.Nil(t, err)
+	assert.Error(t, server.Connect())
+}
+
 func TestWire_ConnectHub(t *testing.T) {
 	addr := genAddr(t)
 	initHub := make(chan struct{})
@@ -393,7 +411,175 @@ func TestWire_AuthSuccess(t *testing.T) {
 		assert.Nil(t, client.Connect())
 	}()
 	<-initCli
+}
 
+func TestWire_CloseAbort(t *testing.T) {
+	addr := genAddr(t)
+	initSrv := make(chan struct{})
+	initCli := make(chan struct{})
+	// server side
+	server, err := Mount(addr,
+		WithConnectHook(func(closer io.Closer) {
+			assert.Nil(t, closer.Close())
+		}),
+		WithConnectHook(func(closer io.Closer) {
+			time.Sleep(time.Second)
+			close(initSrv)
+		}))
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, server.Connect())
+	}()
+	<-initSrv
+
+	// client side
+	client, err := Join(addr,
+		WithConnectHook(func(closer io.Closer) {
+			assert.Nil(t, closer.Close())
+		}),
+		WithSessionOpenHook(func(s Session) {
+			close(initCli)
+		}))
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, client.Connect())
+	}()
+	<-initCli
+
+	assert.Equal(t, ErrWireClosed, client.Close())
+	assert.Equal(t, ErrWireClosed, client.Close())
+	assert.Nil(t, server.Close())
+	assert.Nil(t, server.Close())
+}
+
+func TestWire_CloseSuccess(t *testing.T) {
+	addr := genAddr(t)
+	initSrv := make(chan struct{})
+	initCli := make(chan struct{})
+	// server side
+	server, err := Mount(addr,
+		WithConnectHook(func(closer io.Closer) {
+			time.Sleep(time.Second)
+			close(initSrv)
+		}))
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, server.Connect())
+	}()
+	<-initSrv
+
+	// client side
+	client, err := Join(addr,
+		WithSessionOpenHook(func(s Session) {
+			close(initCli)
+		}))
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, client.Connect())
+	}()
+	<-initCli
+
+	assert.Nil(t, client.Close())
+	assert.Equal(t, ErrWireClosed, client.Close())
+
+	assert.Nil(t, server.Close())
+	assert.Nil(t, server.Close())
+
+	assert.Len(t, client.Sessions(), 0)
+	assert.Len(t, server.Sessions(), 0)
+}
+
+func TestWire_Shutdown(t *testing.T) {
+	addr := genAddr(t)
+	initSrv := make(chan struct{})
+	initCli := make(chan Session)
+
+	// server side
+	server, err := Mount(addr,
+		WithSessionCloseTimeout(5*time.Second),
+		WithConnectHook(func(closer io.Closer) {
+			time.Sleep(time.Second)
+			close(initSrv)
+		}))
+	assert.Nil(t, err)
+	server.Stream("ns:stream", func(ctx context.Context, s Stream) {
+		time.Sleep(3 * time.Second)
+		n, err := s.ReadFrom(bytes.NewReader([]byte("ok")))
+		assert.Nil(t, err)
+		assert.Equal(t, int64(2), n)
+	})
+	go func() {
+		assert.Nil(t, server.Connect())
+	}()
+	<-initSrv
+
+	// client side
+	client, err := Join(addr,
+		WithSessionOpenHook(func(s Session) {
+			initCli <- s
+		}))
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, client.Connect())
+	}()
+	sess := <-initCli
+
+	stream, err := sess.OpenStream("ns:stream")
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, server.Close())
+	}()
+	buf := bytes.NewBuffer(nil)
+	n, err := stream.WriteTo(buf)
+	assert.Nil(t, err)
+	assert.Equal(t, int64(2), n)
+}
+
+func TestWire_ShutdownFail(t *testing.T) {
+	addr := genAddr(t)
+	initSrv := make(chan struct{})
+	initCli := make(chan Session)
+
+	// server side
+	server, err := Mount(addr,
+		WithSessionCloseTimeout(time.Second),
+		WithConnectHook(func(closer io.Closer) {
+			time.Sleep(time.Second)
+			close(initSrv)
+		}))
+	assert.Nil(t, err)
+	server.Stream("ns:stream", func(ctx context.Context, s Stream) {
+		time.Sleep(3 * time.Second)
+		n, err := s.ReadFrom(bytes.NewReader([]byte("ok")))
+		assert.Nil(t, err)
+		assert.Equal(t, int64(2), n)
+	})
+	go func() {
+		assert.Nil(t, server.Connect())
+	}()
+	<-initSrv
+
+	// client side
+	client, err := Join(addr,
+		WithSessionOpenHook(func(s Session) {
+			initCli <- s
+		}))
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, client.Connect())
+	}()
+	sess := <-initCli
+
+	stream, err := sess.OpenStream("ns:stream")
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, server.Close())
+	}()
+	buf := bytes.NewBuffer(nil)
+	n, err := stream.WriteTo(buf)
+	assert.Nil(t, err)
+	assert.Equal(t, int64(0), n)
+	assert.Len(t, server.Sessions(), 0)
 }
 
 func genAddr(t *testing.T) string {
