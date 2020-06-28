@@ -1,7 +1,9 @@
 package wirenet
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -196,6 +198,92 @@ func TestWire_ErrorHandler(t *testing.T) {
 	stream, err := sess.OpenStream("unknown")
 	assert.Nil(t, stream)
 	assert.Equal(t, ErrStreamHandlerNotFound, err)
+}
+
+func TestWire_AuthFailed(t *testing.T) {
+	addr := genAddr(t)
+	initSrv := make(chan struct{})
+	initCli := make(chan Session)
+
+	tokenErr := errors.New("token invalid")
+
+	// server side
+	server, err := Mount(addr,
+		WithTokenValidator(func(streamName string, id Identification, token Token) error {
+			if streamName == "confirmSession" {
+				return nil
+			}
+			return tokenErr
+		}),
+		WithErrorHandler(func(_ context.Context, err error) {
+			assert.Contains(t, err.Error(), "token invalid")
+		}),
+		WithConnectHook(func(closer io.Closer) {
+			time.Sleep(time.Second)
+			close(initSrv)
+		}))
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, server.Connect())
+	}()
+	<-initSrv
+
+	// client side
+	client, err := Join(addr, WithSessionOpenHook(func(s Session) {
+		initCli <- s
+	}))
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, client.Connect())
+	}()
+	sess := <-initCli
+
+	stream, err := sess.OpenStream("someStream")
+	assert.Nil(t, stream)
+	assert.Equal(t, err, tokenErr, err)
+}
+
+func TestWire_AuthSuccess(t *testing.T) {
+	addr := genAddr(t)
+	initSrv := make(chan struct{})
+	initCli := make(chan struct{})
+
+	wid := Identification("user")
+	wtoken := Token("user")
+	tokenErr := errors.New("token invalid")
+
+	// server side
+	server, err := Mount(addr,
+		WithTokenValidator(func(streamName string, id Identification, token Token) error {
+			assert.True(t, bytes.Equal(wid, id) && bytes.Equal(wtoken, token))
+			// success
+			if bytes.Equal(wid, id) && bytes.Equal(wtoken, token) {
+				return nil
+			}
+			return tokenErr
+		}),
+		WithConnectHook(func(closer io.Closer) {
+			time.Sleep(time.Second)
+			close(initSrv)
+		}))
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, server.Connect())
+	}()
+	<-initSrv
+
+	// client side
+	client, err := Join(addr,
+		WithIdentification(Identification("user"), Token("user")),
+		WithSessionOpenHook(func(s Session) {
+			close(initCli)
+		}))
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, client.Connect())
+	}()
+	<-initCli
+
 }
 
 func genAddr(t *testing.T) string {
