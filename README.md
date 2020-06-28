@@ -46,7 +46,6 @@ call client1 from the client4  --------NAT------> client1
 ## Table of contents
 - [Installation](#installation)
 - [Examples](#examples)
-    + [Overview](#overview)
     + [Creating connection](#creating-connection)
     + [Stream handling](#stream-handling)
     + [Stream opening](#stream-opening)
