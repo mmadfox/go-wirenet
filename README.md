@@ -1,15 +1,15 @@
 # go-wirenet
 Simple  bidirectional TCP stream server. Useful for NAT traversal.
 ---
+[![Coverage Status](https://coveralls.io/repos/github/mediabuyerbot/go-wirenet/badge.svg?branch=master)](https://coveralls.io/github/mediabuyerbot/go-wirenet?branch=master)
 [![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs]
 
 [godocs]: https://godoc.org/github.com/mediabuyerbot/go-wirenet 
 
-
 ## Table of contents
 - [Installation](#installation)
-- [Sequence](#sequence)
 - [Examples](#examples)
+    + [Overview](#overview)
     + [Creating connection](#creating-connection)
     + [Stream handling](#stream-handling)
     + [Stream opening](#stream-opening)
@@ -24,12 +24,21 @@ Simple  bidirectional TCP stream server. Useful for NAT traversal.
 go get github.com/mediabuyerbot/go-wirenet
 ```
 
-### Sequence
+### Overview
 ```
+// client <-> server
 client join  --------NAT------> server mount
 client conn ok <--------------> server conn ok
 client handler <--------------> call from server
 call from client <------------> server handler
+
+// clients <-> hub
+client1 join ---------NAT---------> hub
+client2 join ---------NAT---------> hub
+client3 join ---------NAT---------> hub
+call from client1 ----------------> client2 handler
+client2 handler <-----------------> call from client3
+client3 handler <-----------------> call from client1 
 ```
 
 ### Examples
