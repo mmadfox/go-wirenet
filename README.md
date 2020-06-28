@@ -1,7 +1,7 @@
 # go-wirenet
 Simple  bidirectional TCP stream server. Useful for NAT traversal.
 ---
-[![Coverage Status](https://coveralls.io/repos/github/mediabuyerbot/go-wirenet/badge.svg?branch=master)](https://coveralls.io/github/mediabuyerbot/go-wirenet?branch=master)
+[![Coverage Status](https://coveralls.io/repos/github/mediabuyerbot/go-wirenet/badge.svg?branch=master&1)](https://coveralls.io/github/mediabuyerbot/go-wirenet?branch=master)
 [![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs]
 
 [godocs]: https://godoc.org/github.com/mediabuyerbot/go-wirenet 
@@ -53,6 +53,7 @@ call client1 from the client4  --------NAT------> client1
     + [Reading from stream](#reading-from-stream)
     + [Using authentication](#using-authentication)
     + [Using SSL/TLS certs](#using-ssltls-certs)
+    + [Shutdown](#shutdown)
     + [Hub mode](#hub-mode)
 - [Options](#options)    
      
@@ -283,6 +284,24 @@ wire, err := wirenet.Mount(":8989", wirenet.WithTLS(tlsConf))
 if err := wire.Connect(); err != nil {
     handleError(err)
 }
+```
+
+#### Shutdown 
+```go
+timeout := 120*time.Second 
+wire, err := wirenet.Mount(":8989",
+    // Waiting time for completion of all streams
+    wirenet.WithSessionCloseTimeout(timeout),
+)
+go func() {
+	if err := wire.Connect(); err != nil {
+	   handleError(err)
+    }
+}()
+
+<-terminate()
+
+wire.Close()
 ```
 
 #### Hub mode 
