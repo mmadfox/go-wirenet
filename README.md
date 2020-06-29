@@ -3,6 +3,7 @@ Simple  bidirectional TCP stream server. Useful for NAT traversal.
 ---
 [![Coverage Status](https://coveralls.io/repos/github/mediabuyerbot/go-wirenet/badge.svg?branch=master&2)](https://coveralls.io/github/mediabuyerbot/go-wirenet?branch=master)
 [![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs]
+[![Go Report Card](https://goreportcard.com/badge/mediabuyerbot/go-wirenet)](https://goreportcard.com/report/mediabuyerbot/go-wirenet)
 
 [godocs]: https://godoc.org/github.com/mediabuyerbot/go-wirenet 
 
@@ -223,10 +224,7 @@ tokenValidator := func(streamName string, id wirenet.Identification, token wiren
    if streamName == "public" {
       return nil 
    }
-   if err := validate(token); err != nil {
-      return err 
-   }
-   return nil
+   return validate(token)
 }
 
 wire, err := wirenet.Mount(":8989", wirenet.WithTokenValidator(tokenValidator))
