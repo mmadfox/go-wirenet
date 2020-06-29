@@ -1,7 +1,7 @@
 # go-wirenet
 Simple  bidirectional TCP stream server. Useful for NAT traversal.
 ---
-[![Coverage Status](https://coveralls.io/repos/github/mediabuyerbot/go-wirenet/badge.svg?branch=master&1)](https://coveralls.io/github/mediabuyerbot/go-wirenet?branch=master)
+[![Coverage Status](https://coveralls.io/repos/github/mediabuyerbot/go-wirenet/badge.svg?branch=master&2)](https://coveralls.io/github/mediabuyerbot/go-wirenet?branch=master)
 [![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs]
 
 [godocs]: https://godoc.org/github.com/mediabuyerbot/go-wirenet 
