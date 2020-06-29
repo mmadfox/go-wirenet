@@ -45,7 +45,9 @@ func (e *OpError) Error() string {
 		return "<nil>"
 	}
 	s := e.Op
-	s = s + " sid-" + e.SessionID.String()
+	if e.SessionID.String() != "00000000-0000-0000-0000-000000000000" {
+		s = s + " sid-" + e.SessionID.String()
+	}
 	if len(e.Identification) > 0 {
 		s = s + " id-" + string(e.Identification)
 	}
@@ -60,7 +62,12 @@ func (e *OpError) Error() string {
 		}
 		s += e.RemoteAddr.String()
 	}
-	s += ": " + e.Err.Error()
+	if e.Err != nil {
+		s += ": " + e.Err.Error()
+	}
+	if len(s) == 0 {
+		s = "<nil>"
+	}
 	return s
 }
 

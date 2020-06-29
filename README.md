@@ -54,6 +54,7 @@ call client1 from the client4  --------NAT------> client1
     + [Using authentication](#using-authentication)
     + [Using SSL/TLS certs](#using-ssltls-certs)
     + [Shutdown](#shutdown)
+    + [KeepAlive](#keepalive)
     + [Hub mode](#hub-mode)
 - [Options](#options)    
      
@@ -292,6 +293,23 @@ timeout := 120*time.Second
 wire, err := wirenet.Mount(":8989",
     // Waiting time for completion of all streams
     wirenet.WithSessionCloseTimeout(timeout),
+)
+go func() {
+	if err := wire.Connect(); err != nil {
+	   handleError(err)
+    }
+}()
+
+<-terminate()
+
+wire.Close()
+```
+
+#### KeepAlive
+```go
+wire, err := wirenet.Join(":8989",
+     WithKeepAlive(true),
+     WithKeepAliveInterval(30 * time.Second), 
 )
 go func() {
 	if err := wire.Connect(); err != nil {

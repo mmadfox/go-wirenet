@@ -582,6 +582,42 @@ func TestWire_ShutdownFail(t *testing.T) {
 	assert.Len(t, server.Sessions(), 0)
 }
 
+func TestWire_KeepAlive(t *testing.T) {
+	addr := genAddr(t)
+	initSrv := make(chan struct{})
+	initCli := make(chan Session)
+
+	// server side
+	server, err := Mount(addr,
+		WithConnectHook(func(closer io.Closer) {
+			time.Sleep(time.Second)
+			close(initSrv)
+		}))
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, server.Connect())
+	}()
+	<-initSrv
+
+	// client side
+	client, err := Join(addr,
+		WithKeepAlive(true),
+		WithKeepAliveInterval(100*time.Millisecond),
+		WithSessionOpenHook(func(s Session) {
+			close(initCli)
+		}),
+		WithSessionCloseHook(func(s Session) {
+
+		}),
+	)
+	assert.Nil(t, err)
+	go func() {
+		assert.Nil(t, client.Connect())
+	}()
+	<-initCli
+	time.Sleep(time.Second)
+}
+
 func genAddr(t *testing.T) string {
 	if t == nil {
 		t = new(testing.T)
