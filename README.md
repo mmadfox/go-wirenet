@@ -307,10 +307,18 @@ wire.Close()
 
 #### KeepAlive
 ```go
+// server side
+wire, err := wirenet.Mount(":8989",
+     WithKeepAlive(true),
+     WithKeepAliveInterval(30 * time.Second), 
+)
+
+// OR client side
 wire, err := wirenet.Join(":8989",
      WithKeepAlive(true),
      WithKeepAliveInterval(30 * time.Second), 
 )
+
 go func() {
 	if err := wire.Connect(); err != nil {
 	   handleError(err)
