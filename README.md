@@ -328,116 +328,40 @@ go func() {
 wire.Close()
 ```
 
-#### Hub mode 
+#### Hub mode
+##### Attention! The name of the stream for each client must be unique!
+hub
 ```go
-func TestWire_ConnectHub(t *testing.T) {
-	addr := genAddr(t)
-	initHub := make(chan struct{})
+ hub, err := wirenet.Hub(":8989")
+ hub.Connect()
+```
 
-	srvToken := Token("token")
-	tokenErr := errors.New("token invalid")
+client1
+```go
+client1, err := wirenet.Join(":8989")
+client1.Stream("client1:readBalance", func(ctx context.Context, s Stream) {})
+go func() {
+   client1.Connect()
+}()
+...
+sess, err := client2.Session("uuid")
+stream, err := sess.OpenStream("client2:readBalance")
+<-termiate()
+client1.Close()
+```
 
-	timeout := time.Hour
-	payload1 := []byte("client1")
-	payload2 := []byte("client2")
-
-	// hub
-	serverTLSConf, err := LoadCertificates("server", "./certs")
-	assert.Nil(t, err)
-	hub, err := Hub(addr,
-		WithTLS(serverTLSConf),
-		WithReadWriteTimeouts(timeout, timeout),
-		WithSessionCloseTimeout(time.Second),
-		WithTokenValidator(func(streamName string, id Identification, token Token) error {
-			if bytes.Equal(srvToken, token) {
-				return nil
-			}
-			return tokenErr
-		}),
-		WithConnectHook(func(closer io.Closer) {
-			close(initHub)
-		}))
-	assert.Nil(t, err)
-	go func() {
-		assert.Nil(t, hub.Connect())
-	}()
-	<-initHub
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	var sess1 Session
-	var sess2 Session
-
-	// clients
-	clientTLSConf, err := LoadCertificates("client", "./certs")
-	assert.Nil(t, err)
-	clientTLSConf.InsecureSkipVerify = true
-
-	// client one
-	id1 := Identification("client1")
-	client1, err := Join(addr,
-		WithSessionOpenHook(func(s Session) {
-			sess1 = s
-			wg.Done()
-		}),
-		WithIdentification(id1, srvToken),
-		WithTLS(clientTLSConf),
-	)
-	assert.Nil(t, err)
-	client1.Stream("c1:codec", func(ctx context.Context, s Stream) {
-		w := s.Writer()
-		w.Write(payload1)
-		w.Close()
-	})
-	go func() {
-		assert.Nil(t, client1.Connect())
-	}()
-
-	// client two
-	id2 := Identification("client2")
-	client2, err := Join(addr,
-		WithSessionOpenHook(func(s Session) {
-			sess2 = s
-			wg.Done()
-		}),
-		WithIdentification(id2, srvToken),
-		WithTLS(clientTLSConf),
-	)
-	assert.Nil(t, err)
-	client2.Stream("c2:codec", func(ctx context.Context, s Stream) {
-		w := s.Writer()
-		w.Write(payload2)
-		w.Close()
-	})
-	go func() {
-		assert.Nil(t, client2.Connect())
-	}()
-	wg.Wait()
-
-	buf := bytes.NewBuffer(nil)
-
-	// client1 -> client2
-	s, err := sess1.OpenStream("c2:codec")
-	assert.Nil(t, err)
-	n, err := s.WriteTo(buf)
-	assert.Nil(t, err)
-	assert.Equal(t, int64(len(payload2)), n)
-	assert.Nil(t, s.Close())
-
-	// client2 -> client1
-	s, err = sess2.OpenStream("c1:codec")
-	assert.Nil(t, err)
-	n, err = s.WriteTo(buf)
-	assert.Nil(t, err)
-	assert.Equal(t, int64(len(payload1)), n)
-	assert.Nil(t, s.Close())
-
-	assert.Equal(t, "client2client1", buf.String())
-	assert.Nil(t, client1.Close())
-	assert.Nil(t, client2.Close())
-	assert.Nil(t, hub.Close())
-}
+client2
+```go
+client2, err := wirenet.Join(":8989")
+client2.Stream("client2:readBalance", func(ctx context.Context, s Stream) {})
+go func() {
+   client2.Connect()
+}()
+...
+sess, err := client2.Session("uuid")
+stream, err := sess.OpenStream("client1:readBalance")
+<-termiate()
+client2.Close()
 ```
 
 #### Options

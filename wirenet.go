@@ -473,16 +473,20 @@ func (w *wire) registerSession(s Session) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.sessions[s.ID()] = s
-	for _, streamName := range s.StreamNames() {
-		w.streamIndex[streamName] = s
+	if w.hubMode {
+		for _, streamName := range s.StreamNames() {
+			w.streamIndex[streamName] = s
+		}
 	}
 }
 
 func (w *wire) unregisterSession(s Session) {
 	var isEmptySessions bool
 	w.mu.Lock()
-	for _, streamName := range s.StreamNames() {
-		delete(w.streamIndex, streamName)
+	if w.hubMode {
+		for _, streamName := range s.StreamNames() {
+			delete(w.streamIndex, streamName)
+		}
 	}
 	delete(w.sessions, s.ID())
 	isEmptySessions = len(w.sessions) == 0

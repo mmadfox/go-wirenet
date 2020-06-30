@@ -574,12 +574,12 @@ func TestWire_ShutdownFail(t *testing.T) {
 	assert.Nil(t, err)
 	go func() {
 		assert.Nil(t, server.Close())
+		assert.Len(t, server.Sessions(), 0)
 	}()
 	buf := bytes.NewBuffer(nil)
 	n, err := stream.WriteTo(buf)
 	assert.Nil(t, err)
 	assert.Equal(t, int64(0), n)
-	assert.Len(t, server.Sessions(), 0)
 }
 
 func TestWire_KeepAlive(t *testing.T) {
