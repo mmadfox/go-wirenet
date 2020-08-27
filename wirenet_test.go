@@ -220,6 +220,8 @@ func TestWire_ConnectTLS(t *testing.T) {
 	}()
 	<-conn
 
+	<-time.After(time.Second)
+
 	clientTLSConf, err := LoadCertificates("client", "./certs")
 	assert.Nil(t, err)
 	clientTLSConf.InsecureSkipVerify = true
